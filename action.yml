@@ -1,0 +1,5 @@
+name: "Update TryHackMe Badge"
+description: "Downloads the latest badge from TryHackMe"
+runs:
+  using: "node16"
+  main: "index.js"
