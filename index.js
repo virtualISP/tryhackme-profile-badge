@@ -7,7 +7,12 @@ const API_URL = 'https://tryhackme.com/api/v2/badges/public-profile?userPublicId
 const OUTPUT_PATH = path.join(__dirname, 'assets', 'uploadme.png');
 
 async function fetchStats() {
-  const response = await fetch(API_URL);
+  const response = await fetch(API_URL, {
+    headers: {
+      "Cookie": "thm-aid=e7804a1b-5969-4ac9-a43e-27208237c432",
+      "User-Agent": "Mozilla/5.0"
+    }
+  });
   if (!response.ok) throw new Error(`API error: ${response.status}`);
   return await response.text();
 }
