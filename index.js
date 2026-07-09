@@ -9,8 +9,10 @@ const OUTPUT_PATH = path.join(__dirname, 'assets', 'uploadme.png');
 async function fetchStats() {
   const response = await fetch(API_URL, {
     headers: {
-      "Cookie": "thm-aid=e7804a1b-5969-4ac9-a43e-27208237c432",
-      "User-Agent": "Mozilla/5.0"
+      "User-Agent": "Mozilla/5.0 (X11; Linux x86_64; rv:140.0) Gecko/20100101 Firefox/140.0",
+      "Accept": "application/json, text/plain, */*",
+      "Accept-Language": "en-US,en;q=0.5",
+      "Referer": "https://tryhackme.com/"
     }
   });
   if (!response.ok) throw new Error(`API error: ${response.status}`);
