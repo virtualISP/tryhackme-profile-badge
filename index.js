@@ -15,7 +15,13 @@ async function fetchStats() {
       "Referer": "https://tryhackme.com/"
     }
   });
-  if (!response.ok) throw new Error(`API error: ${response.status}`);
+  if (!response.ok) {
+  const errorBody = await response.text();
+  console.log("Status:", response.status);
+  console.log("Headers:", Object.fromEntries(response.headers));
+  console.log("Body:", errorBody);
+  throw new Error(`API error: ${response.status}`);
+}
   return await response.text();
 }
 
