@@ -1,28 +1,87 @@
-const fs = require('fs');
-const path = require('path');
 const puppeteer = require('puppeteer');
 const https = require('https');
+const fs = require('fs');
+const path = require('path');
 
-const API_URL = 'https://tryhackme.com/api/v2/badges/public-profile?userPublicId=140548';
+const BADGE_URL = 'https://tryhackme.com/badge/140548';
+const PROFILE_URL = 'https://tryhackme.com/p/virtualISP';
 const OUTPUT_PATH = path.join(__dirname, 'assets', 'uploadme.png');
 
-async function fetchStats() {
-  const response = await fetch(API_URL, {
-    headers: {
-      "User-Agent": "Mozilla/5.0 (X11; Linux x86_64; rv:140.0) Gecko/20100101 Firefox/140.0",
-      "Accept": "application/json, text/plain, */*",
-      "Accept-Language": "en-US,en;q=0.5",
-      "Referer": "https://tryhackme.com/"
-    }
+async function fetchBadgeHTML() {
+  console.log('Launching browser to fetch badge...');
+  const browser = await puppeteer.launch({ 
+    args: ['--no-sandbox', '--disable-setuid-sandbox'],
+    executablePath: '/usr/bin/chromium'
   });
-  if (!response.ok) {
-  const errorBody = await response.text();
-  console.log("Status:", response.status);
-  console.log("Headers:", Object.fromEntries(response.headers));
-  console.log("Body:", errorBody);
-  throw new Error(`API error: ${response.status}`);
+  const page = await browser.newPage();
+  
+  // Set realistic viewport and user agent
+  await page.setViewport({ width: 1280, height: 720 });
+  await page.setUserAgent('Mozilla/5.0 (X11; Linux x86_64; rv:140.0) Gecko/20100101 Firefox/140.0');
+  
+  // Navigate to badge page
+  await page.goto(BADGE_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  
+  // Wait longer for the challenge to resolve and badge content to render
+  await new Promise(resolve => setTimeout(resolve, 10000));
+  
+  const html = await page.content();
+  console.log('Page HTML length:', html.length);
+  await browser.close();
+  
+  // Decode the base64 content from the page
+  return decodeBadgeHTML(html);
 }
-  return await response.text();
+
+async function fetchStreak() {
+  console.log('Launching browser to fetch streak from profile...');
+  const browser = await puppeteer.launch({ 
+    args: ['--no-sandbox', '--disable-setuid-sandbox'],
+    executablePath: '/usr/bin/chromium'
+  });
+  const page = await browser.newPage();
+  
+  await page.setViewport({ width: 1280, height: 720 });
+  await page.setUserAgent('Mozilla/5.0 (X11; Linux x86_64; rv:140.0) Gecko/20100101 Firefox/140.0');
+  
+  await page.goto(PROFILE_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  
+  // Wait for the stats to load - look for elements containing the streak value
+  try {
+    await page.waitForFunction(() => {
+      const text = document.body.innerText;
+      return text.match(/Streak\s+(\d+)/i) !== null;
+    }, { timeout: 15000 });
+  } catch (e) {
+    console.log('Timeout waiting for streak to load, trying anyway...');
+  }
+  
+  await new Promise(resolve => setTimeout(resolve, 3000));
+  
+  // Extract streak from profile page text content
+  const streak = await page.evaluate(() => {
+    const text = document.body.innerText;
+    const match = text.match(/Streak\s+(\d+)/i);
+    return match ? match[1] : null;
+  });
+  
+  await browser.close();
+  console.log('Extracted streak:', streak);
+  return streak || '0';
+}
+
+function decodeBadgeHTML(html) {
+  // The badge page returns a base64-encoded HTML document via document.write(atob(...))
+  const match = html.match(/document\.write\(window\.atob\("([^"]+)"\)\)/);
+  if (!match) {
+    // Fallback: maybe it's not encoded
+    console.log('No base64 encoding found, using raw HTML');
+    return html;
+  }
+  const encoded = match[1];
+  const decoded = Buffer.from(encoded, 'base64').toString('utf-8');
+  console.log('Decoded HTML length:', decoded.length);
+  return decoded;
 }
 
 async function downloadImageAsBase64(url) {
@@ -43,33 +102,43 @@ async function downloadImageAsBase64(url) {
   });
 }
 
-function extractStats(html) {
-  // Extract username
-  const username = html.match(/<span class="user_name">([^<]+)<\/span>/)?.[1] || 'virtualISP';
+function extractStats(html, streak) {
+  // Extract username and rank title from .thm_nickname and .thm_rank
+  const nicknameMatch = html.match(/<span class="thm_nickname">([^<]+)<\/span>/);
+  const username = nicknameMatch ? nicknameMatch[1] : 'virtualISP';
   
-  // Extract rank title
-  const rankTitle = html.match(/<span class="rank-title">([^<]+)<\/span>/)?.[1] || '[0xD]';
+  // Extract rank title - handle potential line breaks in closing tag
+  const rankMatch = html.match(/<span class="thm_rank">([^<]+)<\/span\s*>/);
+  const rankTitle = rankMatch ? rankMatch[1] : '[0xD]';
   
-  // Extract avatar URL - look for it in the style block
+  // Extract avatar URL from the thm_avatar div's style attribute
   let avatarUrl = null;
-  const styleMatch = html.match(/\.thm-avatar\s*{[^}]*background-image:\s*url\(['"]?([^'")]+)['"]?\)/i);
-  if (styleMatch) {
-    avatarUrl = styleMatch[1];
+  const avatarMatch = html.match(/class="thm_avatar"[^>]*style="[^"]*background-image:\s*url\(['"]?([^'")]+)['"]?\)/);
+  if (avatarMatch) {
+    avatarUrl = avatarMatch[1];
+    // If it's a relative path, prepend the base URL
+    if (avatarUrl.startsWith('user-avatars/')) {
+      avatarUrl = 'https://tryhackme-images.s3.amazonaws.com/' + avatarUrl;
+    }
   } else {
-    // Fallback: any url() in the HTML
-    const anyUrlMatch = html.match(/url\(['"]?([^'")]+)['"]?\)/);
-    avatarUrl = anyUrlMatch ? anyUrlMatch[1] : null;
+    // Fallback: any url() in the HTML for avatars
+    const anyUrlMatch = html.match(/user-avatars\/([^'")]+)/);
+    avatarUrl = anyUrlMatch ? 'https://tryhackme-images.s3.amazonaws.com/user-avatars/' + anyUrlMatch[1] : null;
   }
   
-  // Hardcoded fallback if extraction fails (using your avatar from earlier)
+  // Hardcoded fallback if extraction fails
   if (!avatarUrl) {
     avatarUrl = 'https://tryhackme-images.s3.amazonaws.com/user-avatars/9868455b210665b03783b489764e48df.png';
   }
   
-  // Extract four stats
-  const statsMatches = [...html.matchAll(/<span class="details-text">([^<]+)<\/span>/g)];
-  if (statsMatches.length < 4) throw new Error(`Expected 4 stats, found ${statsMatches.length}`);
-  const [points, streak, rank, rooms] = statsMatches.map(m => m[1]);
+  // Extract stats from .thm_stat spans - the badge now shows 3 stats:
+  // trophy (points), door (rooms), target (rank)
+  // Note: streak/fire stat is no longer present in the badge
+  const statsMatches = [...html.matchAll(/<span class="thm_stat[^"]*">([^<]+)<\/span>/g)];
+  if (statsMatches.length < 3) throw new Error(`Expected at least 3 stats, found ${statsMatches.length}`);
+  
+  // Order in badge: trophy (points), door (rooms), target (rank)
+  const [points, rooms, rank] = statsMatches.map(m => m[1]);
   
   return { username, rankTitle, avatarUrl, points, streak, rank, rooms };
 }
@@ -233,16 +302,21 @@ async function buildHTML(stats) {
 
 async function main() {
   try {
-    console.log('Fetching stats...');
-    const html = await fetchStats();
-    const stats = extractStats(html);
+    console.log('Fetching badge HTML via browser...');
+    const html = await fetchBadgeHTML();
+    
+    console.log('Fetching streak from profile...');
+    const streak = await fetchStreak();
+    
+    const stats = extractStats(html, streak);
     console.log('Stats extracted:', stats);
 
     const badgeHTML = await buildHTML(stats);
 
     console.log('Launching browser...');
     const browser = await puppeteer.launch({ 
-      args: ['--no-sandbox', '--disable-setuid-sandbox']
+      args: ['--no-sandbox', '--disable-setuid-sandbox'],
+      executablePath: '/usr/bin/chromium'
     });
     const page = await browser.newPage();
     await page.setViewport({ width: 329, height: 88 });
