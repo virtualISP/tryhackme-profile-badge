@@ -145,7 +145,11 @@ function extractStats(html, streak) {
   
   // Extract stats using flexible multi-pattern matching
   const stats = extractStatsFromBadgeHTML(html);
-  if (stats.length < 3) throw new Error(`Expected at least 3 stats, found ${stats.length}`);
+  console.log('Extracted stats:', stats);
+  if (stats.length < 3) {
+    console.log('DEBUG: HTML preview:', html.substring(0, 3000));
+    throw new Error(`Expected at least 3 stats, found ${stats.length}`);
+  }
   
   // Order: trophy (points), door (rooms), target (rank)
   const [points, rooms, rank] = stats;
