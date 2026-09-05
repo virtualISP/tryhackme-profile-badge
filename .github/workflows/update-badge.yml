@@ -2,7 +2,7 @@ name: Update TryHackMe Badge
 
 on:
   schedule:
-    - cron: '0 * * * *'   # every hour
+    - cron: '17 * * * *'   # every hour at minute 17 (avoid :00 congestion)
   workflow_dispatch:       # manual trigger
 
 # Explicitly grant write permissions for GITHUB_TOKEN
@@ -14,15 +14,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           fetch-depth: 0   # fetch all history for rebase
 
       - name: Set up Node.js
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
-          node-version: 18
+          node-version: 24
 
       - name: Install dependencies
         run: npm install
@@ -40,7 +40,7 @@ jobs:
           if ! git diff --cached --quiet; then
             git commit -m "🔄 Updated TryHackMe badge (live stats)"
             # Reconfigure remote URL to include the token
-            git remote set-url origin https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git
+            git remote set-url origin https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git
             git pull --rebase origin main
             git push
           else

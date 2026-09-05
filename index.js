@@ -11,7 +11,8 @@ async function fetchBadgeHTML() {
   console.log('Launching browser to fetch badge...');
   const browser = await puppeteer.launch({ 
     args: ['--no-sandbox', '--disable-setuid-sandbox'],
-    executablePath: '/usr/bin/chromium'
+    executablePath: '/usr/bin/chromium',
+    headless: 'new'
   });
   const page = await browser.newPage();
   
@@ -19,13 +20,23 @@ async function fetchBadgeHTML() {
   await page.setViewport({ width: 1280, height: 720 });
   await page.setUserAgent('Mozilla/5.0 (X11; Linux x86_64; rv:140.0) Gecko/20100101 Firefox/140.0');
   
-  // Navigate to badge page
-  await page.goto(BADGE_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  // Navigate to badge page with retry
+  let html;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      await page.goto(BADGE_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
+      break;
+    } catch (e) {
+      if (attempt === 3) throw e;
+      console.log(`Navigation attempt ${attempt} failed, retrying...`);
+      await new Promise(r => setTimeout(r, 5000 * attempt));
+    }
+  }
   
   // Wait longer for the challenge to resolve and badge content to render
   await new Promise(resolve => setTimeout(resolve, 10000));
   
-  const html = await page.content();
+  html = await page.content();
   console.log('Page HTML length:', html.length);
   await browser.close();
   
@@ -37,7 +48,8 @@ async function fetchStreak() {
   console.log('Launching browser to fetch streak from profile...');
   const browser = await puppeteer.launch({ 
     args: ['--no-sandbox', '--disable-setuid-sandbox'],
-    executablePath: '/usr/bin/chromium'
+    executablePath: '/usr/bin/chromium',
+    headless: 'new'
   });
   const page = await browser.newPage();
   
@@ -131,16 +143,46 @@ function extractStats(html, streak) {
     avatarUrl = 'https://tryhackme-images.s3.amazonaws.com/user-avatars/9868455b210665b03783b489764e48df.png';
   }
   
-  // Extract stats from .thm_stat spans - the badge now shows 3 stats:
-  // trophy (points), door (rooms), target (rank)
-  // Note: streak/fire stat is no longer present in the badge
-  const statsMatches = [...html.matchAll(/<span class="thm_stat[^"]*">([^<]+)<\/span>/g)];
-  if (statsMatches.length < 3) throw new Error(`Expected at least 3 stats, found ${statsMatches.length}`);
+  // Extract stats using flexible multi-pattern matching
+  const stats = extractStatsFromBadgeHTML(html);
+  if (stats.length < 3) throw new Error(`Expected at least 3 stats, found ${stats.length}`);
   
-  // Order in badge: trophy (points), door (rooms), target (rank)
-  const [points, rooms, rank] = statsMatches.map(m => m[1]);
+  // Order: trophy (points), door (rooms), target (rank)
+  const [points, rooms, rank] = stats;
   
   return { username, rankTitle, avatarUrl, points, streak, rank, rooms };
+}
+
+function extractStatsFromBadgeHTML(html) {
+  // Try multiple patterns to extract stats
+  // Pattern 1: base64-decoded format (.thm_stat spans)
+  let statsMatches = [...html.matchAll(/<span class="thm_stat[^"]*">([^<]+)<\/span>/g)];
+  if (statsMatches.length >= 3) {
+    return statsMatches.map(m => m[1]);
+  }
+  
+  // Pattern 2: raw HTML format (different class names)
+  statsMatches = [...html.matchAll(/<span class="details-text">([^<]+)<\/span>/g)];
+  if (statsMatches.length >= 3) {
+    return statsMatches.map(m => m[1]);
+  }
+  
+  // Pattern 3: look for numbers near icon indicators
+  const text = html;
+  const trophyMatch = text.match(/trophy[^>]*>\s*(\d+)/i);
+  const doorMatch = text.match(/door[^>]*>\s*(\d+)/i);
+  const targetMatch = text.match(/target[^>]*>\s*(\d+)/i);
+  if (trophyMatch && doorMatch && targetMatch) {
+    return [trophyMatch[1], doorMatch[1], targetMatch[1]];
+  }
+  
+  // Pattern 4: look for stats in any order with icons
+  const allStats = [...text.matchAll(/(?:trophy|door|target)[^>]*>\s*(\d+)/gi)];
+  if (allStats.length >= 3) {
+    return allStats.map(m => m[1]);
+  }
+  
+  return [];
 }
 
 async function buildHTML(stats) {
@@ -316,7 +358,8 @@ async function main() {
     console.log('Launching browser...');
     const browser = await puppeteer.launch({ 
       args: ['--no-sandbox', '--disable-setuid-sandbox'],
-      executablePath: '/usr/bin/chromium'
+      executablePath: '/usr/bin/chromium',
+      headless: 'new'
     });
     const page = await browser.newPage();
     await page.setViewport({ width: 329, height: 88 });
