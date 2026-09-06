@@ -28,6 +28,8 @@ jobs:
         run: npm install
 
       - name: Generate badge screenshot
+        env:
+          SCRAPERAPI_KEY: ${{ secrets.SCRAPERAPI_KEY }}
         run: node index.js
 
       - name: Commit and push if changed
