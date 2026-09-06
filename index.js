@@ -1,4 +1,7 @@
-const puppeteer = require('puppeteer');
+const puppeteer = require('puppeteer-extra');
+const StealthPlugin = require('puppeteer-extra-plugin-stealth');
+puppeteer.use(StealthPlugin());
+
 const https = require('https');
 const fs = require('fs');
 const path = require('path');
@@ -8,26 +11,48 @@ const PROFILE_URL = 'https://tryhackme.com/p/virtualISP';
 const OUTPUT_PATH = path.join(__dirname, 'assets', 'uploadme.png');
 
 async function fetchBadgeHTML() {
-  console.log('Launching browser to fetch badge...');
+  console.log('Launching stealth browser to fetch badge...');
   const browser = await puppeteer.launch({ 
-    args: ['--no-sandbox', '--disable-setuid-sandbox'],
+    args: [
+      '--no-sandbox', 
+      '--disable-setuid-sandbox',
+      '--disable-blink-features=AutomationControlled',
+      '--disable-features=VizDisplayCompositor',
+      '--no-first-run',
+      '--no-default-browser-check'
+    ],
     executablePath: '/usr/bin/chromium',
-    headless: 'new'
+    headless: 'new',
+    ignoreDefaultArgs: ['--enable-automation']
   });
   const page = await browser.newPage();
   
   // Set realistic viewport and user agent
-  await page.setViewport({ width: 1280, height: 720 });
-  await page.setUserAgent('Mozilla/5.0 (X11; Linux x86_64; rv:140.0) Gecko/20100101 Firefox/140.0');
+  await page.setViewport({ width: 1366, height: 768 });
+  await page.setUserAgent('Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+  
+  // Set additional headers
+  await page.setExtraHTTPHeaders({
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+    'Accept-Language': 'en-US,en;q=0.9',
+    'Accept-Encoding': 'gzip, deflate, br',
+    'Connection': 'keep-alive',
+    'Upgrade-Insecure-Requests': '1',
+    'Sec-Fetch-Dest': 'document',
+    'Sec-Fetch-Mode': 'navigate',
+    'Sec-Fetch-Site': 'none',
+    'Sec-Fetch-User': '?1',
+    'Cache-Control': 'max-age=0'
+  });
   
   // Navigate to badge page with retry
   let html;
-  for (let attempt = 1; attempt <= 3; attempt++) {
+  for (let attempt = 1; attempt <= 2; attempt++) {
     try {
-      await page.goto(BADGE_URL, { waitUntil: 'domcontentloaded', timeout: 90000 });
+      await page.goto(BADGE_URL, { waitUntil: 'domcontentloaded', timeout: 120000 });
       break;
     } catch (e) {
-      if (attempt === 3) throw e;
+      if (attempt === 2) throw e;
       console.log(`Navigation attempt ${attempt} failed, retrying...`);
       await new Promise(r => setTimeout(r, 10000 * attempt));
     }
@@ -37,8 +62,6 @@ async function fetchBadgeHTML() {
   console.log('Waiting for badge content to load...');
   try {
     await page.waitForFunction(() => {
-      // The badge page renders via document.write(atob(...)) 
-      // which sets innerHTML - look for the badge container
       const html = document.documentElement.innerHTML;
       return html.includes('thm_badge') && !html.includes('Vercel Security Checkpoint');
     }, { timeout: 120000 });
@@ -63,61 +86,7 @@ async function fetchBadgeHTML() {
   // Decode the base64 content from the page
   const decoded = decodeBadgeHTML(html);
   console.log('Decoded HTML length:', decoded.length);
-  console.log('Decoded HTML preview:', decoded.substring(0, 2000));
-  
   return decoded;
-}
-
-async function fetchStreak() {
-  console.log('Launching browser to fetch streak from profile...');
-  const browser = await puppeteer.launch({ 
-    args: ['--no-sandbox', '--disable-setuid-sandbox'],
-    executablePath: '/usr/bin/chromium',
-    headless: 'new'
-  });
-  const page = await browser.newPage();
-  
-  await page.setViewport({ width: 1280, height: 720 });
-  await page.setUserAgent('Mozilla/5.0 (X11; Linux x86_64; rv:140.0) Gecko/20100101 Firefox/140.0');
-  
-  await page.goto(PROFILE_URL, { waitUntil: 'domcontentloaded', timeout: 120000 });
-  
-  // Wait for the Vercel challenge to resolve - profile page may take a while
-  console.log('Waiting for profile page to load (may include Vercel challenge)...');
-  try {
-    await page.waitForFunction(() => {
-      const text = document.body.innerText;
-      // Check if we're past the Vercel challenge
-      if (text.includes('Vercel Security Checkpoint') || text.includes('spinner')) {
-        return false;
-      }
-      // Look for user-specific content (username or streak)
-      return text.includes('virtualISP') && text.match(/Streak\s+(\d+)/i) !== null;
-    }, { timeout: 180000 });
-    console.log('Profile page loaded with stats');
-  } catch (e) {
-    console.log('Profile page did not load stats in time, trying anyway...');
-  }
-  
-  // Debug: log page text
-  const pageText = await page.evaluate(() => document.body.innerText);
-  console.log('Profile page text preview:', pageText.substring(0, 1500));
-  
-  // Also check if we hit the challenge
-  if (pageText.includes('Vercel Security Checkpoint')) {
-    console.log('WARNING: Still on Vercel challenge on profile page');
-  }
-  
-  // Extract streak from profile page text content
-  const streak = await page.evaluate(() => {
-    const text = document.body.innerText;
-    const match = text.match(/Streak\s+(\d+)/i);
-    return match ? match[1] : null;
-  });
-  
-  await browser.close();
-  console.log('Extracted streak:', streak);
-  return streak || '0';
 }
 
 function decodeBadgeHTML(html) {
@@ -134,23 +103,101 @@ function decodeBadgeHTML(html) {
   return decoded;
 }
 
-async function downloadImageAsBase64(url) {
-  return new Promise((resolve, reject) => {
-    https.get(url, (res) => {
-      if (res.statusCode !== 200) {
-        reject(new Error(`Failed to download image: ${res.statusCode}`));
-        return;
-      }
-      const data = [];
-      res.on('data', chunk => data.push(chunk));
-      res.on('end', () => {
-        const base64 = Buffer.concat(data).toString('base64');
-        const mime = res.headers['content-type'] || 'image/png';
-        resolve(`data:${mime};base64,${base64}`);
-      });
-    }).on('error', reject);
+async function fetchStreak() {
+  console.log('Launching stealth browser to fetch streak from profile...');
+  const browser = await puppeteer.launch({ 
+    args: [
+      '--no-sandbox', 
+      '--disable-setuid-sandbox',
+      '--disable-blink-features=AutomationControlled',
+      '--disable-features=VizDisplayCompositor',
+      '--no-first-run',
+      '--no-default-browser-check'
+    ],
+    executablePath: '/usr/bin/chromium',
+    headless: 'new',
+    ignoreDefaultArgs: ['--enable-automation']
   });
+  const page = await browser.newPage();
+  
+  await page.setViewport({ width: 1366, height: 768 });
+  await page.setUserAgent('Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+  
+  await page.setExtraHTTPHeaders({
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+    'Accept-Language': 'en-US,en;q=0.9',
+    'Accept-Encoding': 'gzip, deflate, br',
+    'Connection': 'keep-alive',
+    'Upgrade-Insecure-Requests': '1',
+    'Sec-Fetch-Dest': 'document',
+    'Sec-Fetch-Mode': 'navigate',
+    'Sec-Fetch-Site': 'none',
+    'Sec-Fetch-User': '?1',
+    'Cache-Control': 'max-age=0'
+  });
+  
+  try {
+    await page.goto(PROFILE_URL, { waitUntil: 'domcontentloaded', timeout: 120000 });
+    
+    // Wait for the Vercel challenge to resolve - profile page may take a while
+    console.log('Waiting for profile page to load (may include Vercel challenge)...');
+    try {
+      await page.waitForFunction(() => {
+        const text = document.body.innerText;
+        if (text.includes('Vercel Security Checkpoint') || text.includes('spinner')) {
+          return false;
+        }
+        return text.includes('virtualISP') && text.match(/Streak\s+(\d+)/i) !== null;
+      }, { timeout: 180000 });
+      console.log('Profile page loaded with stats');
+    } catch (e) {
+      console.log('Profile page did not load stats in time, trying anyway...');
+    }
+    
+    // Get page content - wrap in try-catch for frame issues
+    let html = '';
+    try {
+      html = await page.content();
+      console.log('Profile page HTML length:', html.length);
+      
+      if (html.includes('Vercel Security Checkpoint')) {
+        console.log('WARNING: Still on Vercel challenge on profile page');
+      }
+    } catch (e) {
+      console.log('Could not get page content:', e.message);
+    }
+    
+    // Extract streak from page HTML
+    const streakMatch = html.match(/Streak\s+(\d+)/i);
+    const streak = streakMatch ? streakMatch[1] : null;
+    
+    await browser.close();
+    console.log('Extracted streak:', streak);
+    return streak || '0';
+  } catch (e) {
+    console.log('Error fetching streak:', e.message);
+    try { await browser.close(); } catch {}
+    return '0';
+  }
 }
+
+  async function downloadImageAsBase64(url) {
+    return new Promise((resolve, reject) => {
+      https.get(url, (res) => {
+        if (res.statusCode !== 200) {
+          reject(new Error(`Failed to download image: ${res.statusCode}`));
+          return;
+        }
+        const data = [];
+        res.on('data', chunk => data.push(chunk));
+        res.on('end', () => {
+          const base64 = Buffer.concat(data).toString('base64');
+          const mime = res.headers['content-type'] || 'image/png';
+          resolve(`data:${mime};base64,${base64}`);
+        });
+      }).on('error', reject);
+    });
+  }
 
 function extractStats(html, streak) {
   // Extract username and rank title from .thm_nickname and .thm_rank
