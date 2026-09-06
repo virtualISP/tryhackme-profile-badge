@@ -24,12 +24,21 @@ function buildScraperAPIUrl(targetUrl, options = {}) {
   const params = new URLSearchParams({
     api_key: SCRAPERAPI_KEY,
     url: targetUrl,
-    render: options.render || 'false',
+    render: options.render !== undefined ? options.render : 'true',
     country_code: options.country_code || 'us',
-    premium: options.premium || 'true',
+    premium: options.premium !== undefined ? options.premium : 'true',
     retry_404: 'false',
-    session_number: options.session || Math.floor(Math.random() * 10000)
+    session_number: options.session || Math.floor(Math.random() * 10000),
+    // Additional options for Vercel challenges
+    keep_headers: 'true',
+    // Try to get fully rendered page
+    wait_for_selector: options.waitFor || '',
   });
+  
+  // Remove empty params
+  for (const [key, value] of params.entries()) {
+    if (value === '') params.delete(key);
+  }
   
   return `https://api.scraperapi.com/?${params.toString()}`;
 }
@@ -48,6 +57,7 @@ async function fetchWithScraperAPI(url, options = {}) {
   
   const scraperUrl = buildScraperAPIUrl(url, options);
   console.log(`Fetching via ScraperAPI: ${url}`);
+  console.log(`ScraperAPI URL: ${scraperUrl.substring(0, 100)}...`);
   
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => reject(new Error('ScraperAPI timeout')), 60000);
@@ -57,9 +67,13 @@ async function fetchWithScraperAPI(url, options = {}) {
       let data = '';
       res.on('data', chunk => data += chunk);
       res.on('end', () => {
+        console.log(`ScraperAPI response: HTTP ${res.statusCode}, length: ${data.length}`);
         if (res.statusCode === 200) {
+          // Debug: show first 500 chars
+          console.log(`ScraperAPI preview: ${data.substring(0, 500)}`);
           resolve(data);
         } else {
+          console.log(`ScraperAPI error body: ${data.substring(0, 500)}`);
           reject(new Error(`ScraperAPI HTTP ${res.statusCode}`));
         }
       });
