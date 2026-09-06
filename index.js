@@ -154,10 +154,10 @@ async function fetchStreak() {
       console.log('Profile page did not load stats in time, trying anyway...');
     }
     
-    // Get page content - wrap in try-catch for frame issues
+    // Get page content - use main frame to avoid detached frame issues
     let html = '';
     try {
-      html = await page.content();
+      html = await page.mainFrame().content();
       console.log('Profile page HTML length:', html.length);
       
       if (html.includes('Vercel Security Checkpoint')) {
