@@ -80,52 +80,40 @@ async function fetchStreak() {
   await page.setViewport({ width: 1280, height: 720 });
   await page.setUserAgent('Mozilla/5.0 (X11; Linux x86_64; rv:140.0) Gecko/20100101 Firefox/140.0');
   
-  await page.goto(PROFILE_URL, { waitUntil: 'domcontentloaded', timeout: 90000 });
+  await page.goto(PROFILE_URL, { waitUntil: 'domcontentloaded', timeout: 120000 });
   
-  // Debug: log page text to see what's there
+  // Wait for the Vercel challenge to resolve - profile page may take a while
+  console.log('Waiting for profile page to load (may include Vercel challenge)...');
+  try {
+    await page.waitForFunction(() => {
+      const text = document.body.innerText;
+      // Check if we're past the Vercel challenge
+      if (text.includes('Vercel Security Checkpoint') || text.includes('spinner')) {
+        return false;
+      }
+      // Look for user-specific content (username or streak)
+      return text.includes('virtualISP') && text.match(/Streak\s+(\d+)/i) !== null;
+    }, { timeout: 180000 });
+    console.log('Profile page loaded with stats');
+  } catch (e) {
+    console.log('Profile page did not load stats in time, trying anyway...');
+  }
+  
+  // Debug: log page text
   const pageText = await page.evaluate(() => document.body.innerText);
-  console.log('Profile page text preview:', pageText.substring(0, 1000));
+  console.log('Profile page text preview:', pageText.substring(0, 1500));
   
-  // Also check if we hit the challenge - wait for it to resolve
+  // Also check if we hit the challenge
   if (pageText.includes('Vercel Security Checkpoint')) {
-    console.log('WARNING: Hit Vercel challenge on profile page, waiting for it to resolve...');
-    try {
-      await page.waitForFunction(() => {
-        const text = document.body.innerText;
-        return !text.includes('Vercel Security Checkpoint') && text.match(/Streak\s+(\d+)/i) !== null;
-      }, { timeout: 60000 });
-      console.log('Challenge resolved, stats loaded');
-    } catch (e) {
-      console.log('Challenge did not resolve in time, trying anyway...');
-    }
+    console.log('WARNING: Still on Vercel challenge on profile page');
   }
   
-  // Wait for the profile page to load past the challenge
-  let streak = null;
-  for (let attempt = 1; attempt <= 3; attempt++) {
-    // Wait for the stats to load - look for elements containing the streak value
-    try {
-      await page.waitForFunction(() => {
-        const text = document.body.innerText;
-        return text.match(/Streak\s+(\d+)/i) !== null;
-      }, { timeout: 20000 });
-      streak = await page.evaluate(() => {
-        const text = document.body.innerText;
-        const match = text.match(/Streak\s+(\d+)/i);
-        return match ? match[1] : null;
-      });
-      if (streak) break;
-    } catch (e) {
-      console.log(`Streak attempt ${attempt} timed out...`);
-    }
-    
-    // Refresh the page to retry
-    try {
-      await page.reload({ waitUntil: 'domcontentloaded', timeout: 60000 });
-    } catch (e) {
-      // ignore reload errors
-    }
-  }
+  // Extract streak from profile page text content
+  const streak = await page.evaluate(() => {
+    const text = document.body.innerText;
+    const match = text.match(/Streak\s+(\d+)/i);
+    return match ? match[1] : null;
+  });
   
   await browser.close();
   console.log('Extracted streak:', streak);
@@ -401,8 +389,8 @@ async function main() {
     console.log('Fetching badge HTML via browser...');
     const html = await fetchBadgeHTML();
     
-    // Use fallback streak since badge page doesn't include it and profile requires auth
-    const streak = '0';
+    console.log('Fetching streak from profile...');
+    const streak = await fetchStreak();
     
     const stats = extractStats(html, streak);
     console.log('Stats extracted:', stats);
