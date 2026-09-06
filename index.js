@@ -24,24 +24,48 @@ async function fetchBadgeHTML() {
   let html;
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
-      await page.goto(BADGE_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
+      await page.goto(BADGE_URL, { waitUntil: 'domcontentloaded', timeout: 90000 });
       break;
     } catch (e) {
       if (attempt === 3) throw e;
       console.log(`Navigation attempt ${attempt} failed, retrying...`);
-      await new Promise(r => setTimeout(r, 5000 * attempt));
+      await new Promise(r => setTimeout(r, 10000 * attempt));
     }
   }
   
-  // Wait longer for the challenge to resolve and badge content to render
-  await new Promise(resolve => setTimeout(resolve, 10000));
+  // Wait for challenge to resolve - if Vercel challenge is present, wait longer
+  console.log('Waiting for badge content to load...');
+  try {
+    await page.waitForFunction(() => {
+      // The badge page renders via document.write(atob(...)) 
+      // which sets innerHTML - look for the badge container
+      const html = document.documentElement.innerHTML;
+      return html.includes('thm_badge') && !html.includes('Vercel Security Checkpoint');
+    }, { timeout: 120000 });
+    console.log('Badge content detected');
+  } catch (e) {
+    console.log('Timeout waiting for badge content, checking anyway...');
+  }
+  
+  // Additional wait for JS rendering
+  await new Promise(resolve => setTimeout(resolve, 5000));
   
   html = await page.content();
   console.log('Page HTML length:', html.length);
+  
+  // Check if we got the challenge page
+  if (html.includes('Vercel Security Checkpoint')) {
+    console.log('WARNING: Still on Vercel challenge page');
+  }
+  
   await browser.close();
   
   // Decode the base64 content from the page
-  return decodeBadgeHTML(html);
+  const decoded = decodeBadgeHTML(html);
+  console.log('Decoded HTML length:', decoded.length);
+  console.log('Decoded HTML preview:', decoded.substring(0, 2000));
+  
+  return decoded;
 }
 
 async function fetchStreak() {
@@ -56,26 +80,52 @@ async function fetchStreak() {
   await page.setViewport({ width: 1280, height: 720 });
   await page.setUserAgent('Mozilla/5.0 (X11; Linux x86_64; rv:140.0) Gecko/20100101 Firefox/140.0');
   
-  await page.goto(PROFILE_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await page.goto(PROFILE_URL, { waitUntil: 'domcontentloaded', timeout: 90000 });
   
-  // Wait for the stats to load - look for elements containing the streak value
-  try {
-    await page.waitForFunction(() => {
-      const text = document.body.innerText;
-      return text.match(/Streak\s+(\d+)/i) !== null;
-    }, { timeout: 15000 });
-  } catch (e) {
-    console.log('Timeout waiting for streak to load, trying anyway...');
+  // Debug: log page text to see what's there
+  const pageText = await page.evaluate(() => document.body.innerText);
+  console.log('Profile page text preview:', pageText.substring(0, 1000));
+  
+  // Also check if we hit the challenge - wait for it to resolve
+  if (pageText.includes('Vercel Security Checkpoint')) {
+    console.log('WARNING: Hit Vercel challenge on profile page, waiting for it to resolve...');
+    try {
+      await page.waitForFunction(() => {
+        const text = document.body.innerText;
+        return !text.includes('Vercel Security Checkpoint') && text.match(/Streak\s+(\d+)/i) !== null;
+      }, { timeout: 60000 });
+      console.log('Challenge resolved, stats loaded');
+    } catch (e) {
+      console.log('Challenge did not resolve in time, trying anyway...');
+    }
   }
   
-  await new Promise(resolve => setTimeout(resolve, 3000));
-  
-  // Extract streak from profile page text content
-  const streak = await page.evaluate(() => {
-    const text = document.body.innerText;
-    const match = text.match(/Streak\s+(\d+)/i);
-    return match ? match[1] : null;
-  });
+  // Wait for the profile page to load past the challenge
+  let streak = null;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    // Wait for the stats to load - look for elements containing the streak value
+    try {
+      await page.waitForFunction(() => {
+        const text = document.body.innerText;
+        return text.match(/Streak\s+(\d+)/i) !== null;
+      }, { timeout: 20000 });
+      streak = await page.evaluate(() => {
+        const text = document.body.innerText;
+        const match = text.match(/Streak\s+(\d+)/i);
+        return match ? match[1] : null;
+      });
+      if (streak) break;
+    } catch (e) {
+      console.log(`Streak attempt ${attempt} timed out...`);
+    }
+    
+    // Refresh the page to retry
+    try {
+      await page.reload({ waitUntil: 'domcontentloaded', timeout: 60000 });
+    } catch (e) {
+      // ignore reload errors
+    }
+  }
   
   await browser.close();
   console.log('Extracted streak:', streak);
@@ -351,38 +401,53 @@ async function main() {
     console.log('Fetching badge HTML via browser...');
     const html = await fetchBadgeHTML();
     
-    console.log('Fetching streak from profile...');
-    const streak = await fetchStreak();
+    // Use fallback streak since badge page doesn't include it and profile requires auth
+    const streak = '0';
     
     const stats = extractStats(html, streak);
     console.log('Stats extracted:', stats);
 
     const badgeHTML = await buildHTML(stats);
-
-    console.log('Launching browser...');
-    const browser = await puppeteer.launch({ 
-      args: ['--no-sandbox', '--disable-setuid-sandbox'],
-      executablePath: '/usr/bin/chromium',
-      headless: 'new'
-    });
-    const page = await browser.newPage();
-    await page.setViewport({ width: 329, height: 88 });
     
-    await page.setContent(badgeHTML, { waitUntil: 'networkidle0' });
-    
-    // Wait for avatar to be present and then a bit more
-    await page.waitForSelector('.thm-avatar');
-    await new Promise(resolve => setTimeout(resolve, 500));
-
-    console.log('Taking screenshot...');
-    await page.screenshot({ path: OUTPUT_PATH, omitBackground: true });
-
-    await browser.close();
-    console.log('✅ Exact badge screenshot saved!');
+    // Screenshot with retry
+    let screenshotSuccess = false;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        console.log(`Screenshot attempt ${attempt}...`);
+        await takeScreenshot(badgeHTML);
+        console.log('✅ Exact badge screenshot saved!');
+        screenshotSuccess = true;
+        break;
+      } catch (e) {
+        console.log(`Screenshot attempt ${attempt} failed:`, e.message);
+        if (attempt < 3) await new Promise(r => setTimeout(r, 3000));
+      }
+    }
+    if (!screenshotSuccess) throw new Error('All screenshot attempts failed');
   } catch (err) {
     console.error('❌ Failed:', err.message);
     process.exit(1);
   }
+}
+
+async function takeScreenshot(html) {
+  const browser = await puppeteer.launch({ 
+    args: ['--no-sandbox', '--disable-setuid-sandbox'],
+    executablePath: '/usr/bin/chromium',
+    headless: 'new'
+  });
+  const page = await browser.newPage();
+  await page.setViewport({ width: 329, height: 88 });
+  
+  await page.setContent(html, { waitUntil: 'networkidle0' });
+  
+  // Wait for avatar to be present and then a bit more
+  await page.waitForSelector('.thm-avatar');
+  await new Promise(resolve => setTimeout(resolve, 500));
+  
+  await page.screenshot({ path: OUTPUT_PATH, omitBackground: true });
+  
+  await browser.close();
 }
 
 main();
