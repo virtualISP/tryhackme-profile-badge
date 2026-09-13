@@ -12,363 +12,136 @@ const BADGE_URL = 'https://tryhackme.com/badge/140548';
 const PROFILE_URL = 'https://tryhackme.com/p/virtualISP';
 const OUTPUT_PATH = path.join(__dirname, 'assets', 'uploadme.png');
 
-// ScraperAPI configuration - uses residential proxies to bypass Vercel
-// Get free key at https://www.scraperapi.com (5000 requests/month)
-const SCRAPERAPI_KEY = process.env.SCRAPERAPI_KEY || '';
-const USE_SCRAPERAPI = SCRAPERAPI_KEY.length > 0;
+// FlareSolverr configuration - self-hosted proxy to solve Vercel/Cloudflare challenges
+// Runs as Docker container in GitHub Actions, or locally via: docker run -d -p 8191:8191 ghcr.io/flaresolverr/flaresolverr:latest
+const FLARESOLVERR_URL = process.env.FLARESOLVERR_URL || '';
+const USE_FLARESOLVERR = FLARESOLVERR_URL.length > 0;
 
-// Build ScraperAPI URL
-function buildScraperAPIUrl(targetUrl, options = {}) {
-  if (!USE_SCRAPERAPI) return targetUrl;
-  
-  const params = new URLSearchParams({
-    api_key: SCRAPERAPI_KEY,
-    url: targetUrl,
-    render: options.render !== undefined ? options.render : 'true',
-    country_code: options.country_code || 'us',
-    premium: options.premium !== undefined ? options.premium : 'true',
-    retry_404: 'false',
-    session_number: options.session || Math.floor(Math.random() * 10000),
-    // Additional options for Vercel challenges
-    keep_headers: 'true',
-    // Try to get fully rendered page
-    wait_for_selector: options.waitFor || '',
+// Fetch a page via FlareSolverr (solves Vercel/Cloudflare JS challenges)
+async function fetchViaFlareSolverr(url, options = {}) {
+  if (!USE_FLARESOLVERR) {
+    throw new Error('FLARESOLVERR_URL not set');
+  }
+
+  const payload = JSON.stringify({
+    cmd: 'request.get',
+    url: url,
+    maxTimeout: options.maxTimeout || 120000,  // 2 minutes
   });
-  
-  // Remove empty params
-  for (const [key, value] of params.entries()) {
-    if (value === '') params.delete(key);
-  }
-  
-  return `https://api.scraperapi.com/?${params.toString()}`;
-}
 
-// Build proxy URL for Puppeteer
-function getScraperAPIProxy() {
-  if (!USE_SCRAPERAPI) return null;
-  // ScraperAPI proxy format: http://scraperapi:{key}@proxy-server.scraperapi.com:8001
-  return `http://scraperapi:${SCRAPERAPI_KEY}@proxy-server.scraperapi.com:8001`;
-}
+  const parsedUrl = new URL(FLARESOLVERR_URL);
 
-async function fetchWithScraperAPI(url, options = {}) {
-  if (!USE_SCRAPERAPI) {
-    throw new Error('SCRAPERAPI_KEY not set');
-  }
-  
-  const scraperUrl = buildScraperAPIUrl(url, options);
-  console.log(`Fetching via ScraperAPI: ${url}`);
-  console.log(`ScraperAPI URL: ${scraperUrl.substring(0, 100)}...`);
-  
   return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error('ScraperAPI timeout')), 60000);
-    
-    https.get(scraperUrl, (res) => {
+    const timeout = setTimeout(() => reject(new Error('FlareSolverr timeout')), 150000);
+
+    const req = http.request(parsedUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(payload),
+      },
+    }, (res) => {
       clearTimeout(timeout);
       let data = '';
       res.on('data', chunk => data += chunk);
       res.on('end', () => {
-        console.log(`ScraperAPI response: HTTP ${res.statusCode}, length: ${data.length}`);
-        if (res.statusCode === 200) {
-          // Debug: show first 500 chars
-          console.log(`ScraperAPI preview: ${data.substring(0, 500)}`);
-          resolve(data);
-        } else {
-          console.log(`ScraperAPI error body: ${data.substring(0, 500)}`);
-          reject(new Error(`ScraperAPI HTTP ${res.statusCode}`));
+        try {
+          const json = JSON.parse(data);
+          if (json.status === 'ok' && json.solution) {
+            const body = json.solution.response;
+            resolve(body);
+          } else {
+            const msg = json.message || 'unknown error';
+            reject(new Error(`FlareSolverr: ${msg}`));
+          }
+        } catch (e) {
+          reject(e);
         }
       });
-    }).on('error', (e) => {
+    });
+
+    req.on('error', (e) => {
       clearTimeout(timeout);
       reject(e);
     });
+    req.write(payload);
+    req.end();
   });
 }
 
 async function fetchBadgeHTML() {
-  console.log('Fetching badge...');
+  if (!USE_FLARESOLVERR) throw new Error('FlareSolverr not configured');
   
-  // Try ScraperAPI first if configured
-  if (USE_SCRAPERAPI) {
-    try {
-      const html = await fetchWithScraperAPI(BADGE_URL, { render: 'true', premium: 'true' });
-      
-      // Check for Vercel challenge
-      if (html.includes('Vercel Security Checkpoint')) {
-        console.log('ScraperAPI returned challenge page, falling back to Puppeteer');
-      } 
-      // Check if it's the base64-encoded badge response (what we want)
-      else if (html.includes('document.write(window.atob(')) {
-        console.log('Badge fetched successfully via ScraperAPI (base64 encoded)');
-        return decodeBadgeHTML(html);
-      }
-      // Check if it's already decoded HTML with badge content
-      else if (html.includes('thm_badge')) {
-        console.log('Badge fetched successfully via ScraperAPI (decoded HTML)');
-        return decodeBadgeHTML(html);
-      }
-      else {
-        console.log('ScraperAPI returned unexpected content, falling back to Puppeteer');
-      }
-    } catch (e) {
-      console.log('ScraperAPI failed:', e.message);
-    }
+  const html = await fetchViaFlareSolverr(BADGE_URL);
+  
+  // TryHackMe badge page returns base64-encoded HTML: document.write(window.atob("..."))
+  const match = html.match(/document\.write\(window\.atob\("([^"]+)"\)\)/);
+  if (match) {
+    const encoded = match[1];
+    return Buffer.from(encoded, 'base64').toString('utf-8');
   }
   
-  // Fallback: Puppeteer with stealth
-  return fetchBadgeHTMLPuppeteer();
-}
-
-async function fetchBadgeHTMLPuppeteer() {
-  console.log('Launching stealth browser to fetch badge...');
-  const browser = await puppeteer.launch({ 
-    args: [
-      '--no-sandbox', 
-      '--disable-setuid-sandbox',
-      '--disable-blink-features=AutomationControlled',
-      '--disable-features=VizDisplayCompositor',
-      '--no-first-run',
-      '--no-default-browser-check'
-    ],
-    executablePath: '/usr/bin/chromium',
-    headless: 'new',
-    ignoreDefaultArgs: ['--enable-automation']
-  });
-  const page = await browser.newPage();
-  
-  await page.setViewport({ width: 1366, height: 768 });
-  await page.setUserAgent('Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
-  
-  await page.setExtraHTTPHeaders({
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-    'Accept-Language': 'en-US,en;q=0.9',
-    'Accept-Encoding': 'gzip, deflate, br',
-    'Connection': 'keep-alive',
-    'Upgrade-Insecure-Requests': '1',
-    'Sec-Fetch-Dest': 'document',
-    'Sec-Fetch-Mode': 'navigate',
-    'Sec-Fetch-Site': 'none',
-    'Sec-Fetch-User': '?1',
-    'Cache-Control': 'max-age=0'
-  });
-  
-  let html;
-  for (let attempt = 1; attempt <= 2; attempt++) {
-    try {
-      await page.goto(BADGE_URL, { waitUntil: 'domcontentloaded', timeout: 120000 });
-      break;
-    } catch (e) {
-      if (attempt === 2) throw e;
-      console.log(`Navigation attempt ${attempt} failed, retrying...`);
-      await new Promise(r => setTimeout(r, 10000 * attempt));
-    }
-  }
-  
-  console.log('Waiting for badge content to load...');
-  try {
-    await page.waitForFunction(() => {
-      const html = document.documentElement.innerHTML;
-      return html.includes('thm_badge') && !html.includes('Vercel Security Checkpoint');
-    }, { timeout: 120000 });
-    console.log('Badge content detected');
-  } catch (e) {
-    console.log('Timeout waiting for badge content, checking anyway...');
-  }
-  
-  await new Promise(resolve => setTimeout(resolve, 5000));
-  
-  html = await page.content();
-  console.log('Page HTML length:', html.length);
-  
-  if (html.includes('Vercel Security Checkpoint')) {
-    console.log('WARNING: Still on Vercel challenge page');
-  }
-  
-  await browser.close();
-  
-  return decodeBadgeHTML(html);
+  // If not encoded, return as-is (should contain thm_badge)
+  return html;
 }
 
 async function fetchStreak() {
-  console.log('Fetching streak...');
+  if (!USE_FLARESOLVERR) throw new Error('FlareSolverr not configured');
   
-  if (USE_SCRAPERAPI) {
+  // Retry up to 3 times — FlareSolverr can be flaky with heavy React pages
+  for (let attempt = 1; attempt <= 3; attempt++) {
     try {
-      const html = await fetchWithScraperAPI(PROFILE_URL, { render: 'true', premium: 'true' });
-      if (!html.includes('Vercel Security Checkpoint')) {
-        // Try multiple patterns for streak
-        let streak = null;
-        
-        // Pattern 1: "Streak 452" or "Streak: 452"
-        let match = html.match(/Streak\s*:?\s*(\d+)/i);
-        if (match) streak = match[1];
-        
-        // Pattern 2: Look for streak in various HTML structures
-        if (!streak) {
-          match = html.match(/streak["\s]*[:=]\s*["']?(\d+)["']/i);
-          if (match) streak = match[1];
-        }
-        
-        // Pattern 3: Look for data attributes
-        if (!streak) {
-          match = html.match(/data-streak["\s]*[:=]\s*["']?(\d+)["']/i);
-          if (match) streak = match[1];
-        }
-        
-        // Pattern 4: Look near "Streak" text in various contexts
-        if (!streak) {
-          // Find all occurrences of "Streak" and check surrounding text
-          const indices = [];
-          let idx = html.toLowerCase().indexOf('streak');
-          while (idx !== -1) {
-            indices.push(idx);
-            idx = html.toLowerCase().indexOf('streak', idx + 1);
-          }
-          
-          for (const i of indices) {
-            const context = html.substring(Math.max(0, i - 50), i + 100);
-            const m = context.match(/(\d+)/);
-            if (m) {
-              streak = m[1];
-              break;
-            }
-          }
-        }
-        
-        console.log('Extracted streak via ScraperAPI:', streak);
-        return streak || '0';
+      const html = await fetchViaFlareSolverr(PROFILE_URL);
+      
+      // Pattern 1: React structure - "Streak" heading followed by fire icon SVG then number
+      let match = html.match(/>Streak<\/div>[\s\S]*?<\/svg><\/div><span[^>]*>(\d+)<\/span>/i);
+      if (match) return match[1];
+      
+      // Pattern 2: "Streak" followed by any container with a number
+      match = html.match(/>Streak<\/div>[\s\S]{0,500}?(?:span|div)[^>]*>(\d+)<\/(?:span|div)>/i);
+      if (match) return match[1];
+      
+      // Pattern 3: Plain text "Streak 459" or "Streak: 459"
+      match = html.match(/Streak\s*:?\s*(\d+)/i);
+      if (match) return match[1];
+      
+      // Pattern 4: data attribute
+      match = html.match(/data-streak["\s]*[:=]\s*["']?(\d+)["']/i);
+      if (match) return match[1];
+      
+      // Pattern 5: Any number near "streak" in aria-label or class
+      match = html.match(/streak[^>]*>\s*<[^>]*>(\d+)/i);
+      if (match) return match[1];
+      
+      if (attempt < 3) {
+        console.warn(`Streak not found (attempt ${attempt}/3), retrying...`);
+        await new Promise(r => setTimeout(r, 2000));
+        continue;
       }
-      console.log('ScraperAPI returned challenge page for profile');
-    } catch (e) {
-      console.log('ScraperAPI streak fetch failed:', e.message);
-    }
-  }
-  
-  // Fallback: Puppeteer
-  return fetchStreakPuppeteer();
-}
-
-async function fetchStreakPuppeteer() {
-  console.log('Launching stealth browser to fetch streak from profile...');
-  const browser = await puppeteer.launch({ 
-    args: [
-      '--no-sandbox', 
-      '--disable-setuid-sandbox',
-      '--disable-blink-features=AutomationControlled',
-      '--disable-features=VizDisplayCompositor',
-      '--no-first-run',
-      '--no-default-browser-check'
-    ],
-    executablePath: '/usr/bin/chromium',
-    headless: 'new',
-    ignoreDefaultArgs: ['--enable-automation']
-  });
-  const page = await browser.newPage();
-  
-  await page.setViewport({ width: 1366, height: 768 });
-  await page.setUserAgent('Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
-  
-  await page.setExtraHTTPHeaders({
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-    'Accept-Language': 'en-US,en;q=0.9',
-    'Accept-Encoding': 'gzip, deflate, br',
-    'Connection': 'keep-alive',
-    'Upgrade-Insecure-Requests': '1',
-    'Sec-Fetch-Dest': 'document',
-    'Sec-Fetch-Mode': 'navigate',
-    'Sec-Fetch-Site': 'none',
-    'Sec-Fetch-User': '?1',
-    'Cache-Control': 'max-age=0'
-  });
-  
-  try {
-    await page.goto(PROFILE_URL, { waitUntil: 'domcontentloaded', timeout: 120000 });
-    
-    console.log('Waiting for profile page to load...');
-    try {
-      await page.waitForFunction(() => {
-        const text = document.body.innerText;
-        if (text.includes('Vercel Security Checkpoint') || text.includes('spinner')) return false;
-        return text.includes('virtualISP') && text.match(/Streak\s+(\d+)/i) !== null;
-      }, { timeout: 180000 });
-      console.log('Profile page loaded with stats');
-    } catch (e) {
-      console.log('Profile page did not load stats in time, trying anyway...');
-    }
-    
-    let html = '';
-    try {
-      html = await page.mainFrame().content();
-      console.log('Profile page HTML length:', html.length);
-      if (html.includes('Vercel Security Checkpoint')) {
-        console.log('WARNING: Still on Vercel challenge on profile page');
+      
+      console.warn('⚠️ Could not extract streak after 3 attempts');
+      return '0';
+    } catch (err) {
+      if (attempt < 3) {
+        console.warn(`Streak fetch failed (attempt ${attempt}/3): ${err.message}, retrying...`);
+        await new Promise(r => setTimeout(r, 3000));
+        continue;
       }
-    } catch (e) {
-      console.log('Could not get page content:', e.message);
+      throw err;
     }
-    
-    const streakMatch = html.match(/Streak\s+(\d+)/i);
-    const streak = streakMatch ? streakMatch[1] : null;
-    
-    await browser.close();
-    console.log('Extracted streak:', streak);
-    return streak || '0';
-  } catch (e) {
-    console.log('Error fetching streak:', e.message);
-    try { await browser.close(); } catch {}
-    return '0';
   }
-}
-
-function decodeBadgeHTML(html) {
-  const match = html.match(/document\.write\(window\.atob\("([^"]+)"\)\)/);
-  if (!match) {
-    console.log('No base64 encoding found, using raw HTML');
-    return html;
-  }
-  const encoded = match[1];
-  const decoded = Buffer.from(encoded, 'base64').toString('utf-8');
-  console.log('Decoded HTML length:', decoded.length);
-  return decoded;
-}
-
-function extractStats(html, streak) {
-  const nicknameMatch = html.match(/<span class="thm_nickname">([^<]+)<\/span>/);
-  const username = nicknameMatch ? nicknameMatch[1] : 'virtualISP';
-  
-  const rankMatch = html.match(/<span class="thm_rank">([^<]+)<\/span\s*>/);
-  const rankTitle = rankMatch ? rankMatch[1] : '[0xD]';
-  
-  let avatarUrl = null;
-  const avatarMatch = html.match(/class="thm_avatar"[^>]*style="[^"]*background-image:\s*url\(['"]?([^'")]+)['"]?\)/);
-  if (avatarMatch) {
-    avatarUrl = avatarMatch[1];
-    if (avatarUrl.startsWith('user-avatars/')) {
-      avatarUrl = 'https://tryhackme-images.s3.amazonaws.com/' + avatarUrl;
-    }
-  } else {
-    const anyUrlMatch = html.match(/user-avatars\/([^'")]+)/);
-    avatarUrl = anyUrlMatch ? 'https://tryhackme-images.s3.amazonaws.com/user-avatars/' + anyUrlMatch[1] : null;
-  }
-  
-  if (!avatarUrl) {
-    avatarUrl = 'https://tryhackme-images.s3.amazonaws.com/user-avatars/9868455b210665b03783b489764e48df.png';
-  }
-  
-  const stats = extractStatsFromBadgeHTML(html);
-  if (stats.length < 3) throw new Error(`Expected at least 3 stats, found ${stats.length}`);
-  
-  const [points, rooms, rank] = stats;
-  
-  return { username, rankTitle, avatarUrl, points, streak, rank, rooms };
 }
 
 function extractStatsFromBadgeHTML(html) {
+  // Extract points, rooms, rank from badge HTML
+  // Look for spans with thm_stat class or details-text class
   let statsMatches = [...html.matchAll(/<span class="thm_stat[^"]*">([^<]+)<\/span>/g)];
   if (statsMatches.length >= 3) return statsMatches.map(m => m[1]);
   
   statsMatches = [...html.matchAll(/<span class="details-text">([^<]+)<\/span>/g)];
   if (statsMatches.length >= 3) return statsMatches.map(m => m[1]);
   
+  // Fallback: look for trophy, door, target patterns
   const text = html;
   const trophyMatch = text.match(/trophy[^>]*>\s*(\d+)/i);
   const doorMatch = text.match(/door[^>]*>\s*(\d+)/i);
@@ -383,11 +156,11 @@ function extractStatsFromBadgeHTML(html) {
   return [];
 }
 
-async function downloadImageAsBase64(url) {
+async function downloadImageAsDataUri(url) {
   return new Promise((resolve, reject) => {
     https.get(url, (res) => {
       if (res.statusCode !== 200) {
-        reject(new Error(`Failed to download image: ${res.statusCode}`));
+        reject(new Error(`HTTP ${res.statusCode} for ${url}`));
         return;
       }
       const data = [];
@@ -402,13 +175,30 @@ async function downloadImageAsBase64(url) {
 }
 
 async function buildHTML(stats) {
+  // 1. Download avatar from S3 (not behind Vercel)
   let avatarDataUri;
   try {
-    console.log('Downloading avatar...');
-    avatarDataUri = await downloadImageAsBase64(stats.avatarUrl);
+    avatarDataUri = await downloadImageAsDataUri(stats.avatarUrl);
   } catch (err) {
-    console.warn('Failed to download avatar, using fallback placeholder:', err.message);
+    console.warn('Avatar download failed, using fallback:', err.message);
     avatarDataUri = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="60" height="60" viewBox="0 0 60 60"%3E%3Ccircle cx="30" cy="30" r="30" fill="%23333"/%3E%3C/svg%3E';
+  }
+
+  // 2. Load background SVG from local asset (committed to repo)
+  //    To refresh: node download-bg-svg.js  (requires FlareSolverr)
+  const bgSvgPath = path.join(__dirname, 'assets', 'thm_public_badge_bg.svg');
+  let bgDataUri;
+  try {
+    if (fs.existsSync(bgSvgPath)) {
+      const svgContent = fs.readFileSync(bgSvgPath, 'utf8');
+      bgDataUri = `data:image/svg+xml;base64,${Buffer.from(svgContent).toString('base64')}`;
+      console.log(`Background SVG loaded from ${bgSvgPath}`);
+    } else {
+      throw new Error('SVG file not found');
+    }
+  } catch (err) {
+    console.warn('Background SVG load failed, using fallback:', err.message);
+    bgDataUri = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="329" height="88"%3E%3Crect width="329" height="88" fill="%23121212" rx="12"/%3E%3C/svg%3E';
   }
 
   return `<!DOCTYPE html>
@@ -420,7 +210,7 @@ async function buildHTML(stats) {
   <link href="https://fonts.googleapis.com/css2?family=Ubuntu:ital,wght@0,400;0,500;1,400;1,500&display=swap" rel="stylesheet" />
   <style>
     body { width: 329px; height: 88px; margin: 0; background: transparent; }
-    #thm-badge { width: 327px; height: 84px; background-image: url('https://tryhackme.com/img/thm_public_badge_bg.svg'); background-size: cover; display: flex; align-items: center; gap: 12px; border-radius: 12px; }
+    #thm-badge { width: 327px; height: 84px; background-image: url('${bgDataUri}'); background-size: cover; display: flex; align-items: center; gap: 12px; border-radius: 12px; }
     .thm-avatar-outer { width: 60px; height: 60px; border-radius: 50%; background: linear-gradient(to bottom left, #a3ea2a, #2e4463); padding: 2px; margin-left: 10px; display: flex; align-items: center; justify-content: center; }
     .thm-avatar { width: 60px; height: 60px; background-image: url('${avatarDataUri}'); background-size: cover; background-position: center; border-radius: 50%; background-color: #121212; box-shadow: 0 0 3px 0 #303030; }
     .badge-user-details { display: flex; flex-direction: column; gap: 8px; }
@@ -461,19 +251,31 @@ async function buildHTML(stats) {
 }
 
 async function takeScreenshot(html) {
-  const browser = await puppeteer.launch({ 
-    args: [
-      '--no-sandbox', 
-      '--disable-setuid-sandbox',
-      '--disable-blink-features=AutomationControlled',
-      '--disable-features=VizDisplayCompositor',
-      '--no-first-run',
-      '--no-default-browser-check'
-    ],
-    executablePath: '/usr/bin/chromium',
-    headless: 'new',
-    ignoreDefaultArgs: ['--enable-automation']
-  });
+  // Find chromium binary — try common paths, fall back to Puppeteer's bundled Chromium
+  const { execSync } = require('child_process');
+  let chromiumPath;
+  for (const bin of ['chromium-browser', 'chromium', 'google-chrome', 'google-chrome-stable']) {
+    try { chromiumPath = execSync(`which ${bin}`, { encoding: 'utf8' }).trim(); break; } catch {}
+  }
+
+  const launchArgs = [
+    '--no-sandbox',
+    '--disable-setuid-sandbox',
+    '--disable-blink-features=AutomationControlled',
+    '--disable-features=VizDisplayCompositor',
+    '--no-first-run',
+    '--no-default-browser-check'
+  ];
+  const launchOpts = { args: launchArgs, headless: 'new', ignoreDefaultArgs: ['--enable-automation'] };
+  
+  if (chromiumPath) {
+    launchOpts.executablePath = chromiumPath;
+    console.log(`Using system Chromium: ${chromiumPath}`);
+  } else {
+    console.log('No system Chromium found — using Puppeteer bundled Chromium');
+  }
+
+  const browser = await puppeteer.launch(launchOpts);
   const page = await browser.newPage();
   await page.setViewport({ width: 329, height: 88 });
   
@@ -486,33 +288,49 @@ async function takeScreenshot(html) {
 
 async function main() {
   try {
-    console.log('Fetching stats...');
     const html = await fetchBadgeHTML();
-    
     const streak = await fetchStreak();
-    console.log('Extracted streak:', streak);
     
-    const stats = extractStats(html, streak);
-    console.log('Stats extracted:', stats);
-
-    const badgeHTML = await buildHTML(stats);
+    // Extract username, rankTitle, avatarUrl, points, rank, rooms from badge HTML
+    const nicknameMatch = html.match(/<span class="thm_nickname">([^<]+)<\/span>/);
+    const username = nicknameMatch ? nicknameMatch[1] : 'virtualISP';
     
-    let screenshotSuccess = false;
-    for (let attempt = 1; attempt <= 3; attempt++) {
-      try {
-        console.log(`Screenshot attempt ${attempt}...`);
-        await takeScreenshot(badgeHTML);
-        console.log('✅ Exact badge screenshot saved!');
-        screenshotSuccess = true;
-        break;
-      } catch (e) {
-        console.log(`Screenshot attempt ${attempt} failed:`, e.message);
-        if (attempt < 3) await new Promise(r => setTimeout(r, 3000));
+    const rankMatch = html.match(/<span class="thm_rank">([^<]+)<\/span\s*>/);
+    const rankTitle = rankMatch ? rankMatch[1] : '[0xE]';
+    
+    let avatarUrl = null;
+    const avatarMatch = html.match(/class="thm_avatar"[^>]*style="[^"]*background-image:\s*url\(['"]?([^'")]+)['"]?\)/);
+    if (avatarMatch) {
+      avatarUrl = avatarMatch[1];
+      if (avatarUrl.startsWith('user-avatars/')) {
+        avatarUrl = 'https://tryhackme-images.s3.amazonaws.com/' + avatarUrl;
       }
     }
-    if (!screenshotSuccess) throw new Error('All screenshot attempts failed');
+    if (!avatarUrl) {
+      const anyUrlMatch = html.match(/user-avatars\/([^'")]+)/);
+      avatarUrl = anyUrlMatch ? 'https://tryhackme-images.s3.amazonaws.com/user-avatars/' + anyUrlMatch[1] : null;
+    }
+    if (!avatarUrl) {
+      avatarUrl = 'https://tryhackme-images.s3.amazonaws.com/user-avatars/9868455b210665b03783b489764e48df.png';
+    }
+    
+    const statsArray = extractStatsFromBadgeHTML(html);
+    if (statsArray.length < 3) throw new Error(`Expected at least 3 stats from badge, got ${statsArray.length}`);
+    const [points, rooms, rank] = statsArray;
+    
+    const stats = { username, rankTitle, avatarUrl, points, streak, rank, rooms };
+    
+    const badgeHTML = await buildHTML(stats);
+    await takeScreenshot(badgeHTML);
+    
+    console.log('✅ Badge generated successfully!');
+    console.log(`   Username: ${stats.username}`);
+    console.log(`   Points: ${stats.points}`);
+    console.log(`   Streak: ${stats.streak}`);
+    console.log(`   Rank: ${stats.rank}`);
+    console.log(`   Rooms: ${stats.rooms}`);
   } catch (err) {
-    console.error('❌ Failed:', err.message);
+    console.error('❌ Failed to generate badge:', err.message);
     process.exit(1);
   }
 }

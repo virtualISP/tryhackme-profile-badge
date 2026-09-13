@@ -8,7 +8,6 @@ on:
 # Explicitly grant write permissions for GITHUB_TOKEN
 permissions:
   contents: write
-
 jobs:
   update-badge:
     runs-on: ubuntu-latest
@@ -24,13 +23,54 @@ jobs:
         with:
           node-version: 24
 
+      - name: Install system dependencies for Puppeteer
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            libnss3 libxss1 libasound2t64 libatk-bridge2.0-0 libgtk-3-0 \
+            libgbm-dev libdrm-dev libxshmfence-dev fonts-liberation \
+            fonts-noto-cjk fonts-noto-color-emoji chromium-browser || \
+            sudo apt-get install -y -qq chromium || true
+          
+          # Find which chromium binary is available
+          which chromium-browser || which chromium || which google-chrome || echo "No system chromium found, Puppeteer will use bundled"
+
       - name: Install dependencies
         run: npm install
 
+      - name: Start FlareSolverr
+        run: |
+          docker run -d --name flaresolverr \
+            -p 8191:8191 \
+            -e LOG_LEVEL=info \
+            ghcr.io/flaresolverr/flaresolverr:latest
+          
+          # Wait for FlareSolverr to be ready (check health endpoint)
+          echo "Waiting for FlareSolverr to start..."
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:8191 > /dev/null 2>&1; then
+              echo "FlareSolverr is ready!"
+              break
+            fi
+            echo "Attempt $i/30 - waiting 3s..."
+            sleep 3
+          done
+          
+          # Verify it's actually running
+          curl -sf http://localhost:8191 || {
+            echo "ERROR: FlareSolverr failed to start"
+            docker logs flaresolverr
+            exit 1
+          }
+
       - name: Generate badge screenshot
         env:
-          SCRAPERAPI_KEY: ${{ secrets.SCRAPERAPI_KEY }}
+          FLARESOLVERR_URL: 'http://localhost:8191/v1'
         run: node index.js
+
+      - name: Stop FlareSolverr
+        if: always()
+        run: docker rm -f flaresolverr || true
 
       - name: Commit and push if changed
         run: |
@@ -42,7 +82,7 @@ jobs:
           if ! git diff --cached --quiet; then
             git commit -m "🔄 Updated TryHackMe badge (live stats)"
             # Reconfigure remote URL to include the token
-            git remote set-url origin https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git
+            git remote set-url origin "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
             git pull --rebase origin main
             git push
           else
