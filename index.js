@@ -12,21 +12,29 @@ const BADGE_URL = 'https://tryhackme.com/badge/140548';
 const PROFILE_URL = 'https://tryhackme.com/p/virtualISP';
 const OUTPUT_PATH = path.join(__dirname, 'assets', 'uploadme.png');
 
-// FlareSolverr configuration - self-hosted proxy to solve Vercel/Cloudflare challenges
-// Runs as Docker container in GitHub Actions, or locally via: docker run -d -p 8191:8191 ghcr.io/flaresolverr/flaresolverr:latest
+const DEBUG = process.env.DEBUG === '1' || process.env.DEBUG === 'true';
+function debugLog(...args) { if (DEBUG) console.log('[DEBUG]', ...args); }
+function debugFile(name, content) {
+  if (!DEBUG) return;
+  const dir = path.join(__dirname, 'debug');
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  const fp = path.join(dir, name);
+  fs.writeFileSync(fp, typeof content === 'string' ? content : JSON.stringify(content, null, 2));
+  console.log(`[DEBUG] Saved ${fp} (${content.length || 0} bytes)`);
+}
+
+// FlareSolverr configuration
 const FLARESOLVERR_URL = process.env.FLARESOLVERR_URL || '';
 const USE_FLARESOLVERR = FLARESOLVERR_URL.length > 0;
 
-// Fetch a page via FlareSolverr (solves Vercel/Cloudflare JS challenges)
+// ─── FlareSolverr client ───────────────────────────────────────────
 async function fetchViaFlareSolverr(url, options = {}) {
-  if (!USE_FLARESOLVERR) {
-    throw new Error('FLARESOLVERR_URL not set');
-  }
+  if (!USE_FLARESOLVERR) throw new Error('FLARESOLVERR_URL not set');
 
   const payload = JSON.stringify({
     cmd: 'request.get',
     url: url,
-    maxTimeout: options.maxTimeout || 120000,  // 2 minutes
+    maxTimeout: options.maxTimeout || 120000,
   });
 
   const parsedUrl = new URL(FLARESOLVERR_URL);
@@ -49,6 +57,7 @@ async function fetchViaFlareSolverr(url, options = {}) {
           const json = JSON.parse(data);
           if (json.status === 'ok' && json.solution) {
             const body = json.solution.response;
+            debugLog(`FlareSolverr response for ${url}: ${body.length} bytes`);
             resolve(body);
           } else {
             const msg = json.message || 'unknown error';
@@ -69,56 +78,110 @@ async function fetchViaFlareSolverr(url, options = {}) {
   });
 }
 
+// ─── Badge HTML fetch & decode ──────────────────────────────────────
 async function fetchBadgeHTML() {
   if (!USE_FLARESOLVERR) throw new Error('FlareSolverr not configured');
-  
-  const html = await fetchViaFlareSolverr(BADGE_URL);
-  
-  // TryHackMe badge page returns base64-encoded HTML: document.write(window.atob("..."))
-  const match = html.match(/document\.write\(window\.atob\("([^"]+)"\)\)/);
-  if (match) {
-    const encoded = match[1];
-    return Buffer.from(encoded, 'base64').toString('utf-8');
+
+  const rawHtml = await fetchViaFlareSolverr(BADGE_URL);
+  debugFile('badge-raw.html', rawHtml);
+
+  // Check if we got a Vercel challenge page
+  if (rawHtml.includes('x-vercel-challenge') || rawHtml.includes('Just a moment')) {
+    throw new Error('FlareSolverr returned a Vercel challenge page for badge URL');
   }
-  
-  // If not encoded, return as-is (should contain thm_badge)
-  return html;
+
+  // TryHackMe badge page returns base64-encoded HTML: document.write(window.atob("..."))
+  const atobMatch = rawHtml.match(/document\.write\(window\.atob\("([^"]+)"\)\)/);
+  if (atobMatch) {
+    const decoded = Buffer.from(atobMatch[1], 'base64').toString('utf-8');
+    debugLog('Decoded badge HTML:', decoded.length, 'bytes');
+    debugFile('badge-decoded.html', decoded);
+    return decoded;
+  }
+
+  // Maybe the HTML is not encoded but still contains the badge
+  if (rawHtml.includes('thm_badge') || rawHtml.includes('thm_nickname')) {
+    debugLog('Badge HTML not encoded, using raw');
+    return rawHtml;
+  }
+
+  // Last resort: dump and try to extract from whatever we got
+  console.warn('⚠️ Could not decode badge HTML via atob');
+  console.warn('First 500 chars:', rawHtml.substring(0, 500));
+  debugFile('badge-decode-failure.html', rawHtml);
+  return rawHtml;
 }
 
+// ─── Streak extraction ──────────────────────────────────────────────
 async function fetchStreak() {
   if (!USE_FLARESOLVERR) throw new Error('FlareSolverr not configured');
-  
-  // Retry up to 3 times — FlareSolverr can be flaky with heavy React pages
+
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
       const html = await fetchViaFlareSolverr(PROFILE_URL);
-      
+
+      if (attempt === 1) {
+        debugFile('profile-raw.html', html);
+        debugLog('Profile HTML length:', html.length);
+      }
+
+      // Check for Vercel challenge
+      if (html.includes('x-vercel-challenge') || html.includes('Just a moment')) {
+        throw new Error('FlareSolverr returned a Vercel challenge page for profile URL');
+      }
+
       // Pattern 1: React structure - "Streak" heading followed by fire icon SVG then number
       let match = html.match(/>Streak<\/div>[\s\S]*?<\/svg><\/div><span[^>]*>(\d+)<\/span>/i);
-      if (match) return match[1];
-      
+      if (match) { debugLog('Streak P1 match:', match[1]); return match[1]; }
+
       // Pattern 2: "Streak" followed by any container with a number
       match = html.match(/>Streak<\/div>[\s\S]{0,500}?(?:span|div)[^>]*>(\d+)<\/(?:span|div)>/i);
-      if (match) return match[1];
-      
-      // Pattern 3: Plain text "Streak 459" or "Streak: 459"
-      match = html.match(/Streak\s*:?\s*(\d+)/i);
-      if (match) return match[1];
-      
-      // Pattern 4: data attribute
+      if (match) { debugLog('Streak P2 match:', match[1]); return match[1]; }
+
+      // Pattern 3: aria-label="Streak" nearby number
+      match = html.match(/aria-label="Streak[^"]*"[^>]*>[^<]*<[^>]*>(\d+)/i);
+      if (match) { debugLog('Streak P3 match:', match[1]); return match[1]; }
+
+      // Pattern 4: section with id="streak" or similar containing a number
+      match = html.match(/id="streak"[^>]*>[\s\S]{0,300}?(\d+)/i);
+      if (match) { debugLog('Streak P4 match:', match[1]); return match[1]; }
+
+      // Pattern 5: Plain text "Streak 459" or "Streak: 459" (but NOT "Streak notifications")
+      match = html.match(/>Streak<[^>]*>[^<]*(?:<[^>]*>)*\s*(\d+)/i);
+      if (match) { debugLog('Streak P5 match:', match[1]); return match[1]; }
+
+      // Pattern 6: data attribute
       match = html.match(/data-streak["\s]*[:=]\s*["']?(\d+)["']/i);
-      if (match) return match[1];
-      
-      // Pattern 5: Any number near "streak" in aria-label or class
-      match = html.match(/streak[^>]*>\s*<[^>]*>(\d+)/i);
-      if (match) return match[1];
-      
+      if (match) { debugLog('Streak P6 match:', match[1]); return match[1]; }
+
+      // Pattern 7: JSON-LD or embedded data
+      match = html.match(/"streak"\s*:\s*(\d+)/i);
+      if (match) { debugLog('Streak P7 match:', match[1]); return match[1]; }
+
+      // Find ALL numbers within 2000 chars of "Streak"/"streak" for debugging
+      const streakIdx = html.search(/streak/i);
+      if (streakIdx >= 0) {
+        const context = html.substring(streakIdx, Math.min(html.length, streakIdx + 2000));
+        const nearbyNums = [...context.matchAll(/>(\d{1,6})</g)].map(m => m[1]);
+        console.warn('Numbers near "streak":', nearbyNums.slice(0, 10));
+        if (attempt === 1) {
+          console.warn('Profile HTML length:', html.length);
+          console.warn('Profile preview (first 1000 chars):', html.substring(0, 1000));
+          debugFile('streak-context.txt', context);
+          debugFile('profile-failure.html', html);
+        }
+      } else {
+        console.warn('No "streak" text found in profile HTML');
+        console.warn('Profile HTML length:', html.length);
+        console.warn('Profile preview (first 1000 chars):', html.substring(0, 1000));
+      }
+
       if (attempt < 3) {
         console.warn(`Streak not found (attempt ${attempt}/3), retrying...`);
         await new Promise(r => setTimeout(r, 2000));
         continue;
       }
-      
+
       console.warn('⚠️ Could not extract streak after 3 attempts');
       return '0';
     } catch (err) {
@@ -132,30 +195,50 @@ async function fetchStreak() {
   }
 }
 
+// ─── Stats extraction from badge HTML ───────────────────────────────
 function extractStatsFromBadgeHTML(html) {
-  // Extract points, rooms, rank from badge HTML
-  // Look for spans with thm_stat class or details-text class
+  // Pattern 1: <span class="thm_stat...">value</span>
   let statsMatches = [...html.matchAll(/<span class="thm_stat[^"]*">([^<]+)<\/span>/g)];
-  if (statsMatches.length >= 3) return statsMatches.map(m => m[1]);
-  
+  if (statsMatches.length >= 3) {
+    debugLog('Stats via thm_stat:', statsMatches.map(m => m[1]));
+    return statsMatches.map(m => m[1]);
+  }
+
+  // Pattern 2: <span class="details-text">value</span>
   statsMatches = [...html.matchAll(/<span class="details-text">([^<]+)<\/span>/g)];
-  if (statsMatches.length >= 3) return statsMatches.map(m => m[1]);
-  
-  // Fallback: look for trophy, door, target patterns
-  const text = html;
-  const trophyMatch = text.match(/trophy[^>]*>\s*(\d+)/i);
-  const doorMatch = text.match(/door[^>]*>\s*(\d+)/i);
-  const targetMatch = text.match(/target[^>]*>\s*(\d+)/i);
+  if (statsMatches.length >= 3) {
+    debugLog('Stats via details-text:', statsMatches.map(m => m[1]));
+    return statsMatches.map(m => m[1]);
+  }
+
+  // Pattern 3: Look for thm_icon + thm_stat pairs
+  const iconStatMatches = [...html.matchAll(/<img[^>]*class="thm_icon"[^>]*>[\s\S]*?<span[^>]*>(\d[\d,]*)<\/span>/g)];
+  if (iconStatMatches.length >= 3) {
+    debugLog('Stats via icon+stat:', iconStatMatches.map(m => m[1]));
+    return iconStatMatches.map(m => m[1].replace(/,/g, ''));
+  }
+
+  // Pattern 4: trophy/door/target in any attribute
+  const trophyMatch = html.match(/trophy[^>]*>\s*(\d[\d,]*)/i);
+  const doorMatch = html.match(/door[^>]*>\s*(\d[\d,]*)/i);
+  const targetMatch = html.match(/target[^>]*>\s*(\d[\d,]*)/i);
   if (trophyMatch && doorMatch && targetMatch) {
+    debugLog('Stats via trophy/door/target:', [trophyMatch[1], doorMatch[1], targetMatch[1]]);
     return [trophyMatch[1], doorMatch[1], targetMatch[1]];
   }
-  
-  const allStats = [...text.matchAll(/(?:trophy|door|target)[^>]*>\s*(\d+)/gi)];
-  if (allStats.length >= 3) return allStats.map(m => m[1]);
-  
+
+  // Pattern 5: Any three consecutive numbers in spans near icons
+  const allNums = [...html.matchAll(/<span[^>]*>\s*(\d[\d,]*)\s*<\/span>/g)].map(m => m[1].replace(/,/g, ''));
+  if (allNums.length >= 3) {
+    debugLog('Stats via all spans:', allNums.slice(0, 5));
+    return allNums.slice(0, 3);
+  }
+
+  debugLog('No stats found in HTML. First 1000 chars:', html.substring(0, 1000));
   return [];
 }
 
+// ─── Avatar download ────────────────────────────────────────────────
 async function downloadImageAsDataUri(url) {
   return new Promise((resolve, reject) => {
     https.get(url, (res) => {
@@ -174,6 +257,7 @@ async function downloadImageAsDataUri(url) {
   });
 }
 
+// ─── Badge HTML builder ─────────────────────────────────────────────
 async function buildHTML(stats) {
   // 1. Download avatar from S3 (not behind Vercel)
   let avatarDataUri;
@@ -185,14 +269,12 @@ async function buildHTML(stats) {
   }
 
   // 2. Load background SVG from local asset (committed to repo)
-  //    To refresh: node download-bg-svg.js  (requires FlareSolverr)
   const bgSvgPath = path.join(__dirname, 'assets', 'thm_public_badge_bg.svg');
   let bgDataUri;
   try {
     if (fs.existsSync(bgSvgPath)) {
       const svgContent = fs.readFileSync(bgSvgPath, 'utf8');
       bgDataUri = `data:image/svg+xml;base64,${Buffer.from(svgContent).toString('base64')}`;
-      console.log(`Background SVG loaded from ${bgSvgPath}`);
     } else {
       throw new Error('SVG file not found');
     }
@@ -250,6 +332,7 @@ async function buildHTML(stats) {
 </html>`;
 }
 
+// ─── Screenshot ─────────────────────────────────────────────────────
 async function takeScreenshot(html) {
   // Find chromium binary — try common paths, fall back to Puppeteer's bundled Chromium
   const { execSync } = require('child_process');
@@ -286,12 +369,15 @@ async function takeScreenshot(html) {
   await browser.close();
 }
 
+// ─── Main ───────────────────────────────────────────────────────────
 async function main() {
   try {
+    if (DEBUG) console.log('[DEBUG] Mode enabled — saving raw HTML to debug/');
+
     const html = await fetchBadgeHTML();
     const streak = await fetchStreak();
     
-    // Extract username, rankTitle, avatarUrl, points, rank, rooms from badge HTML
+    // Extract username, rankTitle, avatarUrl from badge HTML
     const nicknameMatch = html.match(/<span class="thm_nickname">([^<]+)<\/span>/);
     const username = nicknameMatch ? nicknameMatch[1] : 'virtualISP';
     
@@ -315,7 +401,16 @@ async function main() {
     }
     
     const statsArray = extractStatsFromBadgeHTML(html);
-    if (statsArray.length < 3) throw new Error(`Expected at least 3 stats from badge, got ${statsArray.length}`);
+    if (statsArray.length < 3) {
+      console.warn('⚠️ Stats extraction failed. HTML length:', html.length);
+      console.warn('HTML preview (first 1000 chars):', html.substring(0, 1000));
+      // Check for known patterns
+      console.warn('Has thm_nickname:', html.includes('thm_nickname'));
+      console.warn('Has thm_stat:', html.includes('thm_stat'));
+      console.warn('Has thm_badge:', html.includes('thm_badge'));
+      console.warn('Has details-text:', html.includes('details-text'));
+      throw new Error(`Expected at least 3 stats from badge, got ${statsArray.length}`);
+    }
     const [points, rooms, rank] = statsArray;
     
     const stats = { username, rankTitle, avatarUrl, points, streak, rank, rooms };
