@@ -9,7 +9,6 @@ const path = require('path');
 const { URL } = require('url');
 
 const BADGE_URL = 'https://tryhackme.com/badge/140548';
-const PROFILE_URL = 'https://tryhackme.com/p/virtualISP';
 const OUTPUT_PATH = path.join(__dirname, 'assets', 'uploadme.png');
 
 const DEBUG = process.env.DEBUG === '1' || process.env.DEBUG === 'true';
@@ -86,8 +85,8 @@ async function fetchBadgeHTML() {
   debugFile('badge-raw.html', rawHtml);
 
   // Check if we got a Vercel challenge page
-  if (rawHtml.includes('x-vercel-challenge') || rawHtml.includes('Just a moment')) {
-    throw new Error('FlareSolverr returned a Vercel challenge page for badge URL');
+  if (rawHtml.includes('Vercel Security Checkpoint') || rawHtml.includes('Just a moment')) {
+    throw new Error('FlareSolverr returned a Vercel challenge page — cannot fetch badge data');
   }
 
   // TryHackMe badge page returns base64-encoded HTML: document.write(window.atob("..."))
@@ -105,94 +104,10 @@ async function fetchBadgeHTML() {
     return rawHtml;
   }
 
-  // Last resort: dump and try to extract from whatever we got
-  console.warn('⚠️ Could not decode badge HTML via atob');
+  console.warn('Could not decode badge HTML via atob');
   console.warn('First 500 chars:', rawHtml.substring(0, 500));
   debugFile('badge-decode-failure.html', rawHtml);
   return rawHtml;
-}
-
-// ─── Streak extraction ──────────────────────────────────────────────
-async function fetchStreak() {
-  if (!USE_FLARESOLVERR) throw new Error('FlareSolverr not configured');
-
-  for (let attempt = 1; attempt <= 3; attempt++) {
-    try {
-      const html = await fetchViaFlareSolverr(PROFILE_URL);
-
-      if (attempt === 1) {
-        debugFile('profile-raw.html', html);
-        debugLog('Profile HTML length:', html.length);
-      }
-
-      // Check for Vercel challenge
-      if (html.includes('x-vercel-challenge') || html.includes('Just a moment')) {
-        throw new Error('FlareSolverr returned a Vercel challenge page for profile URL');
-      }
-
-      // Pattern 1: React structure - "Streak" heading followed by fire icon SVG then number
-      let match = html.match(/>Streak<\/div>[\s\S]*?<\/svg><\/div><span[^>]*>(\d+)<\/span>/i);
-      if (match) { debugLog('Streak P1 match:', match[1]); return match[1]; }
-
-      // Pattern 2: "Streak" followed by any container with a number
-      match = html.match(/>Streak<\/div>[\s\S]{0,500}?(?:span|div)[^>]*>(\d+)<\/(?:span|div)>/i);
-      if (match) { debugLog('Streak P2 match:', match[1]); return match[1]; }
-
-      // Pattern 3: aria-label="Streak" nearby number
-      match = html.match(/aria-label="Streak[^"]*"[^>]*>[^<]*<[^>]*>(\d+)/i);
-      if (match) { debugLog('Streak P3 match:', match[1]); return match[1]; }
-
-      // Pattern 4: section with id="streak" or similar containing a number
-      match = html.match(/id="streak"[^>]*>[\s\S]{0,300}?(\d+)/i);
-      if (match) { debugLog('Streak P4 match:', match[1]); return match[1]; }
-
-      // Pattern 5: Plain text "Streak 459" or "Streak: 459" (but NOT "Streak notifications")
-      match = html.match(/>Streak<[^>]*>[^<]*(?:<[^>]*>)*\s*(\d+)/i);
-      if (match) { debugLog('Streak P5 match:', match[1]); return match[1]; }
-
-      // Pattern 6: data attribute
-      match = html.match(/data-streak["\s]*[:=]\s*["']?(\d+)["']/i);
-      if (match) { debugLog('Streak P6 match:', match[1]); return match[1]; }
-
-      // Pattern 7: JSON-LD or embedded data
-      match = html.match(/"streak"\s*:\s*(\d+)/i);
-      if (match) { debugLog('Streak P7 match:', match[1]); return match[1]; }
-
-      // Find ALL numbers within 2000 chars of "Streak"/"streak" for debugging
-      const streakIdx = html.search(/streak/i);
-      if (streakIdx >= 0) {
-        const context = html.substring(streakIdx, Math.min(html.length, streakIdx + 2000));
-        const nearbyNums = [...context.matchAll(/>(\d{1,6})</g)].map(m => m[1]);
-        console.warn('Numbers near "streak":', nearbyNums.slice(0, 10));
-        if (attempt === 1) {
-          console.warn('Profile HTML length:', html.length);
-          console.warn('Profile preview (first 1000 chars):', html.substring(0, 1000));
-          debugFile('streak-context.txt', context);
-          debugFile('profile-failure.html', html);
-        }
-      } else {
-        console.warn('No "streak" text found in profile HTML');
-        console.warn('Profile HTML length:', html.length);
-        console.warn('Profile preview (first 1000 chars):', html.substring(0, 1000));
-      }
-
-      if (attempt < 3) {
-        console.warn(`Streak not found (attempt ${attempt}/3), retrying...`);
-        await new Promise(r => setTimeout(r, 2000));
-        continue;
-      }
-
-      console.warn('⚠️ Could not extract streak after 3 attempts');
-      return '0';
-    } catch (err) {
-      if (attempt < 3) {
-        console.warn(`Streak fetch failed (attempt ${attempt}/3): ${err.message}, retrying...`);
-        await new Promise(r => setTimeout(r, 3000));
-        continue;
-      }
-      throw err;
-    }
-  }
 }
 
 // ─── Stats extraction from badge HTML ───────────────────────────────
@@ -218,16 +133,7 @@ function extractStatsFromBadgeHTML(html) {
     return iconStatMatches.map(m => m[1].replace(/,/g, ''));
   }
 
-  // Pattern 4: trophy/door/target in any attribute
-  const trophyMatch = html.match(/trophy[^>]*>\s*(\d[\d,]*)/i);
-  const doorMatch = html.match(/door[^>]*>\s*(\d[\d,]*)/i);
-  const targetMatch = html.match(/target[^>]*>\s*(\d[\d,]*)/i);
-  if (trophyMatch && doorMatch && targetMatch) {
-    debugLog('Stats via trophy/door/target:', [trophyMatch[1], doorMatch[1], targetMatch[1]]);
-    return [trophyMatch[1], doorMatch[1], targetMatch[1]];
-  }
-
-  // Pattern 5: Any three consecutive numbers in spans near icons
+  // Pattern 4: Any three consecutive numbers in spans
   const allNums = [...html.matchAll(/<span[^>]*>\s*(\d[\d,]*)\s*<\/span>/g)].map(m => m[1].replace(/,/g, ''));
   if (allNums.length >= 3) {
     debugLog('Stats via all spans:', allNums.slice(0, 5));
@@ -304,7 +210,6 @@ async function buildHTML(stats) {
     .details-icon-wrapper { display: flex; gap: 5px; align-items: center; }
     .detail-icons { font-weight: 900; font-size: 11px; }
     .trophy-icon { color: #9ca4b4; }
-    .fire-icon { color: #a3ea2a; font-size: 13px; }
     .award-icon { color: #d752ff; font-size: 13px; }
     .door-closed-icon { color: #719cf9; font-size: 12px; }
     .details-text { font-family: Ubuntu, sans-serif; font-weight: 400; font-size: 11px; color: #ffffff; }
@@ -321,7 +226,6 @@ async function buildHTML(stats) {
       </div>
       <div class="details-wrapper">
         <div class="details-icon-wrapper"><i class="fa-solid fa-trophy detail-icons trophy-icon"></i><span class="details-text">${stats.points}</span></div>
-        <div class="details-icon-wrapper"><i class="fa-solid fa-fire detail-icons fire-icon"></i><span class="details-text">${stats.streak}</span></div>
         <div class="details-icon-wrapper"><i class="fa-solid fa-award detail-icons award-icon"></i><span class="details-text">${stats.rank}</span></div>
         <div class="details-icon-wrapper"><i class="fa-solid fa-door-closed detail-icons door-closed-icon"></i><span class="details-text">${stats.rooms}</span></div>
       </div>
@@ -350,7 +254,7 @@ async function takeScreenshot(html) {
     '--no-default-browser-check'
   ];
   const launchOpts = { args: launchArgs, headless: 'new', ignoreDefaultArgs: ['--enable-automation'] };
-  
+
   if (chromiumPath) {
     launchOpts.executablePath = chromiumPath;
     console.log(`Using system Chromium: ${chromiumPath}`);
@@ -361,7 +265,7 @@ async function takeScreenshot(html) {
   const browser = await puppeteer.launch(launchOpts);
   const page = await browser.newPage();
   await page.setViewport({ width: 329, height: 88 });
-  
+
   await page.setContent(html, { waitUntil: 'networkidle0' });
   await page.waitForSelector('.thm-avatar');
   await new Promise(resolve => setTimeout(resolve, 500));
@@ -375,15 +279,14 @@ async function main() {
     if (DEBUG) console.log('[DEBUG] Mode enabled — saving raw HTML to debug/');
 
     const html = await fetchBadgeHTML();
-    const streak = await fetchStreak();
-    
+
     // Extract username, rankTitle, avatarUrl from badge HTML
     const nicknameMatch = html.match(/<span class="thm_nickname">([^<]+)<\/span>/);
     const username = nicknameMatch ? nicknameMatch[1] : 'virtualISP';
-    
+
     const rankMatch = html.match(/<span class="thm_rank">([^<]+)<\/span\s*>/);
     const rankTitle = rankMatch ? rankMatch[1] : '[0xE]';
-    
+
     let avatarUrl = null;
     const avatarMatch = html.match(/class="thm_avatar"[^>]*style="[^"]*background-image:\s*url\(['"]?([^'")]+)['"]?\)/);
     if (avatarMatch) {
@@ -399,33 +302,29 @@ async function main() {
     if (!avatarUrl) {
       avatarUrl = 'https://tryhackme-images.s3.amazonaws.com/user-avatars/9868455b210665b03783b489764e48df.png';
     }
-    
+
     const statsArray = extractStatsFromBadgeHTML(html);
     if (statsArray.length < 3) {
-      console.warn('⚠️ Stats extraction failed. HTML length:', html.length);
-      console.warn('HTML preview (first 1000 chars):', html.substring(0, 1000));
-      // Check for known patterns
+      console.warn('Stats extraction failed. HTML length:', html.length);
       console.warn('Has thm_nickname:', html.includes('thm_nickname'));
       console.warn('Has thm_stat:', html.includes('thm_stat'));
       console.warn('Has thm_badge:', html.includes('thm_badge'));
-      console.warn('Has details-text:', html.includes('details-text'));
       throw new Error(`Expected at least 3 stats from badge, got ${statsArray.length}`);
     }
     const [points, rooms, rank] = statsArray;
-    
-    const stats = { username, rankTitle, avatarUrl, points, streak, rank, rooms };
-    
+
+    const stats = { username, rankTitle, avatarUrl, points, rank, rooms };
+
     const badgeHTML = await buildHTML(stats);
     await takeScreenshot(badgeHTML);
-    
-    console.log('✅ Badge generated successfully!');
+
+    console.log('Badge generated successfully!');
     console.log(`   Username: ${stats.username}`);
     console.log(`   Points: ${stats.points}`);
-    console.log(`   Streak: ${stats.streak}`);
     console.log(`   Rank: ${stats.rank}`);
     console.log(`   Rooms: ${stats.rooms}`);
   } catch (err) {
-    console.error('❌ Failed to generate badge:', err.message);
+    console.error('Failed to generate badge:', err.message);
     process.exit(1);
   }
 }
