@@ -11,14 +11,14 @@ A GitHub Action that auto-generates and updates a TryHackMe profile badge every 
 3. Extracts **username**, **points**, **rank**, and **rooms** from the decoded HTML.
 4. Downloads the user's **avatar** from TryHackMe's S3 CDN (not behind Vercel).
 5. Loads a **vendored SVG background** (`assets/thm_public_badge_bg.svg`) from the repo.
-6. Renders the badge HTML with **inline SVG icons** (no external CDN) using Puppeteer.
+6. Renders the badge HTML with **exact TryHackMe icons** (trophy, door, target as base64 PNGs) using Puppeteer.
 7. Screenshots the result to `assets/uploadme.png` and commits the update.
 
 ## Tech Stack
 
 - **Node.js 22** + **Puppeteer** (with system Chromium fallback)
 - **ScraperAPI** with `render=true` for reliable fetching from GitHub Actions runners (Vercel blocks datacenter IPs)
-- Inline SVG icons — no Font Awesome or external CSS dependencies
+- Exact TryHackMe icons (trophy, door, target) as base64 PNGs — no Font Awesome or external CSS
 - Vendored background SVG — no external image requests during render
 
 ## Setup
