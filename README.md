@@ -34,7 +34,7 @@ This badge updates **every hour** with my latest TryHackMe progress – points, 
 ## 🔄 How It Works
 
 1. A GitHub Action runs every hour (or can be triggered manually).
-2. It uses Puppeteer with stealth plugin to fetch the badge page (bypassing Vercel JS challenges).
+2. It uses Puppeteer to fetch the badge page and decode the base64-encoded stats.
 3. Extracts stats: points, rank, rooms from the badge HTML.
 4. Renders the official badge HTML with current stats and avatar.
 5. Takes a high‑resolution PNG screenshot saved to `assets/uploadme.png`.

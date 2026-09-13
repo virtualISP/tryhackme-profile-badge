@@ -1,7 +1,4 @@
-const puppeteer = require('puppeteer-extra');
-const StealthPlugin = require('puppeteer-extra-plugin-stealth');
-puppeteer.use(StealthPlugin());
-
+const puppeteer = require('puppeteer');
 const fs = require('fs');
 const path = require('path');
 
@@ -23,8 +20,15 @@ function debugFile(name, content) {
 function getLaunchOptions() {
   const { execSync } = require('child_process');
   let chromiumPath;
-  for (const bin of ['chromium-browser', 'chromium', 'google-chrome', 'google-chrome-stable']) {
-    try { chromiumPath = execSync(`which ${bin}`, { encoding: 'utf8' }).trim(); break; } catch {}
+  try { chromiumPath = execSync('which chromium-browser', { encoding: 'utf8' }).trim(); } catch {}
+  if (!chromiumPath) {
+    try { chromiumPath = execSync('which chromium', { encoding: 'utf8' }).trim(); } catch {}
+  }
+  if (!chromiumPath) {
+    try { chromiumPath = execSync('which google-chrome', { encoding: 'utf8' }).trim(); } catch {}
+  }
+  if (!chromiumPath) {
+    try { chromiumPath = execSync('which google-chrome-stable', { encoding: 'utf8' }).trim(); } catch {}
   }
 
   const launchArgs = [
@@ -33,7 +37,9 @@ function getLaunchOptions() {
     '--disable-blink-features=AutomationControlled',
     '--disable-features=VizDisplayCompositor',
     '--no-first-run',
-    '--no-default-browser-check'
+    '--no-default-browser-check',
+    '--disable-web-security',
+    '--disable-features=IsolateOrigins,site-per-process'
   ];
   const launchOpts = { args: launchArgs, headless: 'new', ignoreDefaultArgs: ['--enable-automation'] };
 
@@ -53,7 +59,8 @@ async function fetchBadgeHTML() {
   try {
     const page = await browser.newPage();
     await page.setViewport({ width: 329, height: 88 });
-    await page.goto(BADGE_URL, { waitUntil: 'networkidle0' });
+    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36');
+    await page.goto(BADGE_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
     let html = await page.content();
     await browser.close();
 
@@ -78,7 +85,7 @@ async function fetchBadgeHTML() {
     debugFile('badge-decode-failure.html', html);
     throw new Error('Badge page did not contain expected content');
   } catch (err) {
-    await browser.close();
+    try { await browser.close(); } catch {}
     throw err;
   }
 }
@@ -156,31 +163,28 @@ async function buildHTML(stats) {
     bgDataUri = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="329" height="88"%3E%3Crect width="329" height="88" fill="%23121212" rx="12"/%3E%3C/svg%3E';
   }
 
+  // Inline CSS to avoid external requests
   return `<!DOCTYPE html>
 <html>
 <head>
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" crossorigin="anonymous" />
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Ubuntu:ital,wght@0,400;0,500;1,400;1,500&display=swap" rel="stylesheet" />
   <style>
-    body { width: 329px; height: 88px; margin: 0; background: transparent; }
+    body { width: 329px; height: 88px; margin: 0; background: transparent; font-family: Ubuntu, sans-serif; }
     #thm-badge { width: 327px; height: 84px; background-image: url('${bgDataUri}'); background-size: cover; display: flex; align-items: center; gap: 12px; border-radius: 12px; }
     .thm-avatar-outer { width: 60px; height: 60px; border-radius: 50%; background: linear-gradient(to bottom left, #a3ea2a, #2e4463); padding: 2px; margin-left: 10px; display: flex; align-items: center; justify-content: center; }
     .thm-avatar { width: 60px; height: 60px; background-image: url('${avatarDataUri}'); background-size: cover; background-position: center; border-radius: 50%; background-color: #121212; box-shadow: 0 0 3px 0 #303030; }
     .badge-user-details { display: flex; flex-direction: column; gap: 8px; }
     .title-wrapper { display: flex; align-items: center; gap: 6px; }
-    .user_name { font-family: 'Ubuntu', sans-serif; font-weight: 500; font-size: 14px; color: #f9f9fb; max-width: 135px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .user_name { font-weight: 500; font-size: 14px; color: #f9f9fb; max-width: 135px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .rank-icon { color: #ffbb45; font-size: 10px; }
-    .rank-title { font-family: Ubuntu, sans-serif; font-weight: 500; font-size: 12px; color: #ffffff; }
+    .rank-title { font-weight: 500; font-size: 12px; color: #ffffff; }
     .details-wrapper { display: flex; gap: 8px; }
     .details-icon-wrapper { display: flex; gap: 5px; align-items: center; }
     .detail-icons { font-weight: 900; font-size: 11px; }
     .trophy-icon { color: #9ca4b4; }
     .award-icon { color: #d752ff; font-size: 13px; }
     .door-closed-icon { color: #719cf9; font-size: 12px; }
-    .details-text { font-family: Ubuntu, sans-serif; font-weight: 400; font-size: 11px; color: #ffffff; }
-    .thm-link { font-family: Ubuntu, sans-serif; font-weight: 400; font-size: 11px; color: #f9f9fb; text-decoration: none; }
+    .details-text { font-weight: 400; font-size: 11px; color: #ffffff; }
+    .thm-link { font-weight: 400; font-size: 11px; color: #f9f9fb; text-decoration: none; }
   </style>
 </head>
 <body>
@@ -209,14 +213,12 @@ async function takeScreenshot(html) {
   try {
     const page = await browser.newPage();
     await page.setViewport({ width: 329, height: 88 });
-    await page.setContent(html, { waitUntil: 'networkidle0' });
-    await page.waitForSelector('.thm-avatar');
+    await page.setContent(html, { waitUntil: 'domcontentloaded' });
+    // Wait a bit for any remaining layout
     await new Promise(resolve => setTimeout(resolve, 500));
     await page.screenshot({ path: OUTPUT_PATH, omitBackground: true });
-    await browser.close();
-  } catch (err) {
-    await browser.close();
-    throw err;
+  } finally {
+    try { await browser.close(); } catch {}
   }
 }
 
