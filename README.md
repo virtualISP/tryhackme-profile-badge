@@ -1,66 +1,70 @@
-# TryHackMe Profile Badge
+# 🛡️ TryHackMe Badge
 
-A GitHub Action that auto-generates and updates a TryHackMe profile badge every 12 hours.
+<div align="center">
 
-![Badge](assets/uploadme.png)
+[![Update Badge](https://github.com/virtualISP/tryhackme-badge/actions/workflows/update-badge.yml/badge.svg)](https://github.com/virtualISP/tryhackme-badge/actions/workflows/update-badge.yml)
+[![Last Commit](https://img.shields.io/github/last-commit/virtualISP/tryhackme-badge)](https://github.com/virtualISP/tryhackme-badge/commits/main)
+[![Profile](https://img.shields.io/badge/TryHackMe-virtualISP-1f8c2f?logo=tryhackme&logoColor=white)](https://tryhackme.com/p/virtualISP)
 
-## How It Works
+</div>
 
-1. Fetches `https://tryhackme.com/badge/140548` via **ScraperAPI** (bypasses Vercel bot protection on CI runners; falls back to direct HTTPS locally).
-2. Decodes the base64-encoded badge HTML from TryHackMe's embed endpoint.
-3. Extracts **username**, **points**, **rank**, and **rooms** from the decoded HTML.
-4. Downloads the user's **avatar** from TryHackMe's S3 CDN (not behind Vercel).
-5. Loads a **vendored SVG background** (`assets/thm_public_badge_bg.svg`) from the repo.
-6. Renders the badge HTML with **exact TryHackMe icons** (trophy, door, target as base64 PNGs) using Puppeteer.
-7. Screenshots the result to `assets/uploadme.png` and commits the update.
+---
 
-## Tech Stack
+## 📊 My Live Stats
 
-- **Node.js 22** + **Puppeteer** (with system Chromium fallback)
-- **ScraperAPI** with `render=true` for reliable fetching from GitHub Actions runners (Vercel blocks datacenter IPs)
-- Exact TryHackMe icons (trophy, door, target) as base64 PNGs — no Font Awesome or external CSS
-- Vendored background SVG — no external image requests during render
+This badge updates **every 12 hours** with my latest TryHackMe progress – points, rank, and rooms completed.  
+Click the badge to visit my profile!
 
-## Setup
+<div align="center">
+  <a href="https://tryhackme.com/p/virtualISP">
+    <img src="./assets/uploadme.png" alt="TryHackMe Badge">
+  </a>
+</div>
 
-### Prerequisites
-- Node.js 22+
-- GitHub repository with Actions enabled
+---
 
-### Secrets
+## ✨ Features
 
-Add `SCRAPER_API_KEY` to your GitHub repo secrets (Settings → Secrets → Actions):
+- **⏱️ Updates every 12 hours** – Always shows current stats.
+- **🎨 Exact replica** – Uses the official TryHackMe badge design (background, icons, avatar).
+- **🤖 Fully automated** – Powered by GitHub Actions and Puppeteer.
+- **🔗 Clickable** – Takes you straight to my TryHackMe profile.
 
-| Secret | Description |
-|--------|-------------|
-| `SCRAPER_API_KEY` | Your ScraperAPI key (free tier: 5,000 requests/month) |
+---
 
-### Local Development
+## 🔄 How It Works
 
-```bash
-npm install
-SCRAPER_API_KEY=your_key DEBUG=1 node index.js
-```
+1. A GitHub Action runs every 12 hours (or can be triggered manually).
+2. It fetches my latest stats from TryHackMe via ScraperAPI.
+3. Puppeteer renders the official badge HTML with my stats, avatar, and exact THM icons.
+4. A PNG screenshot is saved to `assets/uploadme.png`.
+5. If the image changed (i.e., stats updated), it’s committed back to the repo.
 
-Without `SCRAPER_API_KEY`, falls back to direct HTTPS fetch (works on residential IPs).
+---
 
-## Project Structure
+## 🚀 Run Your Own
 
-```
-index.js                              — Main script (fetch → decode → extract → render → screenshot)
-assets/uploadme.png                   — Generated badge image (329x88 PNG)
-assets/thm_public_badge_bg.svg        — Vendored badge background
-.github/workflows/update-badge.yml    — GitHub Actions workflow (every 12 hours)
-```
+Want an automatically updating TryHackMe badge for your own profile?  
+Fork this repository and update the `userPublicId` in `index.js` with your own ID (find it in the iframe embed code from TryHackMe).  
+Then enable GitHub Actions – that’s it!
 
-## Workflow
+---
 
-The GitHub Action runs automatically every 12 hours and on manual dispatch:
+## 📝 License
 
-- Fetches fresh stats via ScraperAPI
-- Generates the badge PNG
-- Commits and pushes if the image changed
+This project is open source under the [MIT License](LICENSE).  
+The TryHackMe badge design and assets are property of TryHackMe.
 
-## License
+---
 
-MIT
+## 🙌 Acknowledgements
+
+- [TryHackMe](https://tryhackme.com) for the awesome platform.
+- [Puppeteer](https://pptr.dev/) for headless browser rendering.
+- [GitHub Actions](https://github.com/features/actions) for the automation.
+
+---
+
+<div align="center">
+  Made with ❤️ by virtualISP
+</div>
