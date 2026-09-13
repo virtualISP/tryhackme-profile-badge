@@ -91,11 +91,24 @@ async function fetchBadgeHTML() {
   if (USE_SCRAPERAPI) {
     try {
       const html = await fetchWithScraperAPI(BADGE_URL, { render: 'true', premium: 'true' });
-      if (!html.includes('Vercel Security Checkpoint') && html.includes('thm_badge')) {
-        console.log('Badge fetched successfully via ScraperAPI');
+      
+      // Check for Vercel challenge
+      if (html.includes('Vercel Security Checkpoint')) {
+        console.log('ScraperAPI returned challenge page, falling back to Puppeteer');
+      } 
+      // Check if it's the base64-encoded badge response (what we want)
+      else if (html.includes('document.write(window.atob(')) {
+        console.log('Badge fetched successfully via ScraperAPI (base64 encoded)');
         return decodeBadgeHTML(html);
       }
-      console.log('ScraperAPI returned challenge page, falling back to Puppeteer');
+      // Check if it's already decoded HTML with badge content
+      else if (html.includes('thm_badge')) {
+        console.log('Badge fetched successfully via ScraperAPI (decoded HTML)');
+        return decodeBadgeHTML(html);
+      }
+      else {
+        console.log('ScraperAPI returned unexpected content, falling back to Puppeteer');
+      }
     } catch (e) {
       console.log('ScraperAPI failed:', e.message);
     }
@@ -182,8 +195,45 @@ async function fetchStreak() {
     try {
       const html = await fetchWithScraperAPI(PROFILE_URL, { render: 'true', premium: 'true' });
       if (!html.includes('Vercel Security Checkpoint')) {
-        const match = html.match(/Streak\s+(\d+)/i);
-        const streak = match ? match[1] : null;
+        // Try multiple patterns for streak
+        let streak = null;
+        
+        // Pattern 1: "Streak 452" or "Streak: 452"
+        let match = html.match(/Streak\s*:?\s*(\d+)/i);
+        if (match) streak = match[1];
+        
+        // Pattern 2: Look for streak in various HTML structures
+        if (!streak) {
+          match = html.match(/streak["\s]*[:=]\s*["']?(\d+)["']/i);
+          if (match) streak = match[1];
+        }
+        
+        // Pattern 3: Look for data attributes
+        if (!streak) {
+          match = html.match(/data-streak["\s]*[:=]\s*["']?(\d+)["']/i);
+          if (match) streak = match[1];
+        }
+        
+        // Pattern 4: Look near "Streak" text in various contexts
+        if (!streak) {
+          // Find all occurrences of "Streak" and check surrounding text
+          const indices = [];
+          let idx = html.toLowerCase().indexOf('streak');
+          while (idx !== -1) {
+            indices.push(idx);
+            idx = html.toLowerCase().indexOf('streak', idx + 1);
+          }
+          
+          for (const i of indices) {
+            const context = html.substring(Math.max(0, i - 50), i + 100);
+            const m = context.match(/(\d+)/);
+            if (m) {
+              streak = m[1];
+              break;
+            }
+          }
+        }
+        
         console.log('Extracted streak via ScraperAPI:', streak);
         return streak || '0';
       }
