@@ -2,8 +2,8 @@
 
 <div align="center">
 
-[![Update Badge](https://github.com/virtualISP/tryhackme-badge/actions/workflows/update-badge.yml/badge.svg)](https://github.com/virtualISP/tryhackme-badge/actions/workflows/update-badge.yml)
-[![Last Commit](https://img.shields.io/github/last-commit/virtualISP/tryhackme-badge)](https://github.com/virtualISP/tryhackme-badge/commits/main)
+[![Update Badge](https://github.com/virtualISP/tryhackme-profile-badge/actions/workflows/update-badge.yml/badge.svg)](https://github.com/virtualISP/tryhackme-profile-badge/actions/workflows/update-badge.yml)
+[![Last Commit](https://img.shields.io/github/last-commit/virtualISP/tryhackme-profile-badge)](https://github.com/virtualISP/tryhackme-profile-badge/commits/main)
 [![Profile](https://img.shields.io/badge/TryHackMe-virtualISP-1f8c2f?logo=tryhackme&logoColor=white)](https://tryhackme.com/p/virtualISP)
 
 </div>
@@ -12,7 +12,7 @@
 
 ## 📊 My Live Stats
 
-This badge updates **every 12 hours** with my latest TryHackMe progress – points, rank, and rooms completed.  
+This badge updates **every 12 hours** with my latest TryHackMe progress – rank, rooms completed, and badges.  
 Click the badge to visit my profile!
 
 <div align="center">
