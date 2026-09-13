@@ -193,11 +193,10 @@ async function buildHTML(stats) {
     bgDataUri = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="329" height="88"%3E%3Crect width="329" height="88" fill="%23121212" rx="12"/%3E%3C/svg%3E';
   }
 
-  // Inline SVG icons (no external CDN needed — renders in Puppeteer setContent)
-  const iconBolt = '<svg width="10" height="12" viewBox="0 0 24 24" fill="#ffbb45" xmlns="http://www.w3.org/2000/svg"><path d="M13 1L4 14h7l-2 9 9-13h-7l2-9z"/></svg>';
-  const iconTrophy = '<svg width="12" height="12" viewBox="0 0 24 24" fill="#9ca4b4" xmlns="http://www.w3.org/2000/svg"><path d="M12 17c-1.1 0-2-.9-2-2v-1h4v1c0 1.1-.9 2-2 2zm5-4V9c0-2.21-1.79-4-4-4h-2C8.79 5 7 6.79 7 9v4c0 1.66 1.34 3 3 3h1v-2H8.5V9h7v4H14v2h1c1.66 0 3-1.34 3-3zM5 7H3v2h2V7zm0-4h14v2H5V3zM3 19h2v2H3v-2zm16 0h2v2h-2v-2z"/></svg>';
-  const iconAward = '<svg width="12" height="12" viewBox="0 0 24 24" fill="#d752ff" xmlns="http://www.w3.org/2000/svg"><path d="M12 2L9.19 8.63 2 9.24l5.46 4.73L5.82 21 12 17.27 18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2z"/></svg>';
-  const iconDoor = '<svg width="11" height="13" viewBox="0 0 24 24" fill="#719cf9" xmlns="http://www.w3.org/2000/svg"><path d="M5 2v20h14V2H5zm9 15h-2v-2h2v2zm0-4h-2V7h2v6zm2-6h-2V5h2v2zm2 4h-2V7h2v4zm-8 2H6v-4h2v4zm0-6H6V5h2v4z"/></svg>';
+  // Load exact THM icon PNGs as data URIs (no external CDN needed)
+  const iconTrophyUri = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAC10lEQVR42oxTXUhTYRh+v/N952xzus2cujl/1haSmEZlhQVeJBoUaXhRgdBNIHTTXVfRRdBNdV/QRdFFCV2EREFpgkqaRaupaek8buZs6OZfcz9nbuf0fgvyB4oO54XvO8/zvDzf856P9N2gegBoxjqEZYD/exJYHqxuxsUllQ2XSvedatSAGePxOBQ4HKCkUhBdDcPaog8suRkw5RJY8E+B2WwGSoXY/IyvN/TdDyyjwhHn/pbGJ4/uBWf9U1He/trNu3XJaBR+Li9BJBwBliaQQyR42Dn8keMVZda8C231jcGAf0xYiWkOJhmMobmpsMTIYYlB8m++OcY5oVAkzJho5FphNaZRJRFT3O5K0aCD23qJxDmZEJIt4C/53YBjnOOqsIqKklK4liUU6B/uf36gqfVizbfRd+bQ3PQSF1JKQRCwUMyogGuAUrvFWOIoPLO30ln+/sOEj2tpcy2ZDAZndaH5WVu5q9putVe6C4uKqaqqoCgJWI8uQEEeBYOOQlpjdr1E6dvhr7JPDj1GUw/4FOKqqt2ZDcg9Ab98FvfHki3ttbUH64sZFbMOJFGAkbGZhe7eT6OID6HBLiaAl4NsS0ZeVQOvpoG791XXfVXTyO49VUX8/F8m/IuDQ+PjOLHLuJcp2RQJO5PGBnIiEet487LTR4jAM4S+/s+BRDLVwbGd/KwDgoNjmL0+BRgefnAQOZ3J/m3ZBzPM4PhkaVGDTAYgLaEmB4FcdJCZ0kD4gaRV3GAjEZvoRGgtKXNbkhgi2gabzWoSKZznGOdkuajJanc4qsIcBtKT2vWW9it1ktEAll1WOHn6RDULaFc5xjlbBeTW0W0NBprazh33jowIG3gXTCYTEMZgHdeiTgc1Lpfa8+zpIPIa/mSwFtvWIGdaloUKpxPsNhtY8vPxzBlYWV6GcCQCM36/gPycbSGuJzY3G2nwvH7h+ec9lkTwiFuG/0uAAQACpyKt1/ib3gAAAABJRU5ErkJggg==';
+  const iconDoorUri = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAABYElEQVR42oRTPU6GQBAd/gKEhgQbY2JhY0LLCQyFna2lhYWJJ/AS5kssTEw8gAewsCGegHNIrBTIB8Iu687C4vIJH5uQt7sz8+bNAzTGGOB6PNOeOESwvtLbd3YjD6bcdAyi88vryDAMcBwHbNsGXdeBEAJN00Bd14DN3l6eJ2x/BB2IxCRJwHVdqKrqH8ZxLPLUpcsN7ZCkj/q+P4sYpzsEpkpAKQXP80QBylUxz3MRp4sKaE+Ac2On3QfvBQFdICDDCJgo3wwimpdlmTAT42RNgaZpk84fXyUcXT3AZ75dUcAD2AUJMLHj3RENjq93F2Dye4wTumAiGRRIt9mg4PDAh9OT49FEsk8BFsgRJJFEeb+XQCpQTVRxVcFkBF6k4hLB6MH2py/EWbGoLEshW2JRFBAEgcibJfgu+cE0IQxD8TNZljXKb9tWfA+oAPNmCcoK0vtNsvovczGpev4VYAAZAytXIbWINQAAAABJRU5ErkJggg==';
+  const iconTargetUri = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAMAAADXqc3KAAACLlBMVEWVAACbAACcAACjAACoAADhAQHiAQHkAQHlAQH////lAQHjAQGhAACVAADlAQHeAQGwAACVAADlAQGVAACYAADlAQHbAQG8AQGVAADlAQHhAQGmAACVAADlAQHXAQHBAQHkAgLlAgKVAADlAQHnCQnTAQHFAQGdAADnDg6VAADhDQ3lAQHOAQHKAQGVAAC0BwebBASbBgaVAADvQ0PtQkLwRkbpOzvRKSnDJib1Zmb2aGi2ICC4IyP5fX3zamrQNzfNNjboUlLVPj77iYn9lpb9mZn4e3vsWVnyaWnkTEzlTU35eXn6gID/pqbsVFTe2Nje2dne2trf1NTgx8fg3Nzh19fjtrbjurrkqKjk29vlqKjl19fl2NjmoqLmqanmubnnoaHopKTp3NzqsLDq0tLrjY3sdHTswMDt5OTt6OjvV1fwWVnwYmLwZGTwZmbwdXXwenrxWlrxXFzxXV3xsLDxuLjyXl7yeHjzX1/zYGDzbGzz6enz7e30YmL0dHT1ZGT1Zmb1Z2f1tLT1vLz2Zmb2Z2f34OD4aGj4aWn4zMz4zc346+v5amr5fHz6bGz6b2/6d3f6hIT7bm77eHj7wsL7w8P77u778vL8cHD8cnL8hob8jIz9enr9fX39f3/9ior9paX9u7v+gYH+l5f+vb3+wMD+xcX+09P/d3f/fX3/gID/h4f/kpL/lZX/mpr/nZ3/x8f/yMj/1dX/2dn/6Oj/9fX/9vb/+vr/+/v//PyPL9vPAAAAT3RSTlMAAAAAAAAAAAAACwwNDhESExQZHR1HSE1UWVpkant+g4yMkpabnJ+ipaenp66ws7O2wcfJysrL0tjc3N7f5ufo6erw9PT09fb2+Pj9/f3+mAThwgAAAaRJREFUGBkFwTFy00AYgNFvpV/WSrYlx4lJSnoqOE9qirQZTgENDdwoVWZyAiYVQ8BRlJUsZVe70vKeFAAAAAAAgBABWOV6pbGTdRMASgBI6npdao2142DMAiAAZX1R38xLRCXpj602IyBE1vt3X/yySlPm2X/OvqYMKCFm1eG2r4o5GLaZfutuvwXnEWJ9cWMO2dEFOEl+kR5vvk9HhHJXuzJ7sgB4H670WI/DJOSb67D/26G3FV1vJ3U5XP/MJ0Hrk3p0SxraFxRxbsfZat0LuQ5vkuCnJKKWJV2mUOgcIV+5cZVx0gIEu8FPySpHUHFu1juabQ10fUE3FFEhuDn6fk1sCkVsMk8/x9khOBdid57ufv/SWHVY5q4MziHYUW3Nn6vk/LWj3CXhyW/VaBGcvftYtnKWXwLMbVvpO+sQTs+Fr93RVwKE7jWvvXk+ZUI0m/tPhxfTSY4LsdzLfWsiQhya4uHD2abzHbKqsvhgmkEhLDxHF6r3ewB47Jp/DREBaKb+YPI8wzs3Hk0PIAD0/ZCXGyGcRtcCgFAAYK0BAAoA+A9ptOQPOkyFSAAAAABJRU5ErkJggg==';
 
   // Inline CSS to avoid external requests
   return `<!DOCTYPE html>
@@ -211,10 +210,10 @@ async function buildHTML(stats) {
     .badge-user-details { display: flex; flex-direction: column; gap: 8px; }
     .title-wrapper { display: flex; align-items: center; gap: 6px; }
     .user_name { font-weight: 500; font-size: 14px; color: #f9f9fb; max-width: 135px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .rank-title { font-weight: 500; font-size: 12px; color: #ffffff; display: inline-flex; align-items: center; gap: 3px; }
+    .rank-title { font-weight: 500; font-size: 12px; color: #ffffff; }
     .details-wrapper { display: flex; gap: 8px; }
     .details-icon-wrapper { display: flex; gap: 4px; align-items: center; }
-    .details-icon-wrapper svg { flex-shrink: 0; }
+    .details-icon-wrapper img { flex-shrink: 0; height: 16px; opacity: 0.85; }
     .details-text { font-weight: 400; font-size: 11px; color: #ffffff; }
     .thm-link { font-weight: 400; font-size: 11px; color: #f9f9fb; text-decoration: none; }
   </style>
@@ -225,12 +224,12 @@ async function buildHTML(stats) {
     <div class="badge-user-details">
       <div class="title-wrapper">
         <span class="user_name">${stats.username}</span>
-        <span class="rank-title">${iconBolt}${stats.rankTitle}</span>
+        <span class="rank-title">${stats.rankTitle}</span>
       </div>
       <div class="details-wrapper">
-        <div class="details-icon-wrapper">${iconTrophy}<span class="details-text">${stats.points}</span></div>
-        <div class="details-icon-wrapper">${iconAward}<span class="details-text">${stats.rank}</span></div>
-        <div class="details-icon-wrapper">${iconDoor}<span class="details-text">${stats.rooms}</span></div>
+        <div class="details-icon-wrapper"><img src="${iconTrophyUri}" alt="trophy" /><span class="details-text">${stats.points}</span></div>
+        <div class="details-icon-wrapper"><img src="${iconDoorUri}" alt="door" /><span class="details-text">${stats.rooms}</span></div>
+        <div class="details-icon-wrapper"><img src="${iconTargetUri}" alt="target" /><span class="details-text">${stats.rank}</span></div>
       </div>
       <a href="https://tryhackme.com" class="thm-link" target="_blank">tryhackme.com</a>
     </div>
