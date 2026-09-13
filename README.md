@@ -44,9 +44,20 @@ Click the badge to visit my profile!
 
 ## 🚀 Run Your Own
 
-Want an automatically updating TryHackMe badge for your own profile?  
-Fork this repository and update the `userPublicId` in `index.js` with your own ID (find it in the iframe embed code from TryHackMe).  
+Want an automatically updating TryHackMe badge for your own profile?
+Fork this repository and update the `userPublicId` in `index.js` with your own ID (find it in the iframe embed code from TryHackMe).
 Then enable GitHub Actions – that’s it!
+
+## ⚙️ Setup
+
+To run this in GitHub Actions, you need to set up a ScraperAPI key:
+
+1. Get a free ScraperAPI key from [scraperapi.com](https://www.scraperapi.com/) (free tier: 5,000 requests/month)
+2. In your forked repository, go to Settings → Secrets → Actions
+3. Create a new secret named `SCRAPER_API_KEY` with your key value
+4. Enable GitHub Actions - the workflow will automatically run every 12 hours
+
+Without `SCRAPER_API_KEY`, the action falls back to direct HTTPS fetch (works only on non-blocked IPs).
 
 ---
 
