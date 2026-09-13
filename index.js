@@ -193,6 +193,12 @@ async function buildHTML(stats) {
     bgDataUri = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="329" height="88"%3E%3Crect width="329" height="88" fill="%23121212" rx="12"/%3E%3C/svg%3E';
   }
 
+  // Inline SVG icons (no external CDN needed — renders in Puppeteer setContent)
+  const iconBolt = '<svg width="10" height="12" viewBox="0 0 24 24" fill="#ffbb45" xmlns="http://www.w3.org/2000/svg"><path d="M13 1L4 14h7l-2 9 9-13h-7l2-9z"/></svg>';
+  const iconTrophy = '<svg width="12" height="12" viewBox="0 0 24 24" fill="#9ca4b4" xmlns="http://www.w3.org/2000/svg"><path d="M12 17c-1.1 0-2-.9-2-2v-1h4v1c0 1.1-.9 2-2 2zm5-4V9c0-2.21-1.79-4-4-4h-2C8.79 5 7 6.79 7 9v4c0 1.66 1.34 3 3 3h1v-2H8.5V9h7v4H14v2h1c1.66 0 3-1.34 3-3zM5 7H3v2h2V7zm0-4h14v2H5V3zM3 19h2v2H3v-2zm16 0h2v2h-2v-2z"/></svg>';
+  const iconAward = '<svg width="12" height="12" viewBox="0 0 24 24" fill="#d752ff" xmlns="http://www.w3.org/2000/svg"><path d="M12 2L9.19 8.63 2 9.24l5.46 4.73L5.82 21 12 17.27 18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2z"/></svg>';
+  const iconDoor = '<svg width="11" height="13" viewBox="0 0 24 24" fill="#719cf9" xmlns="http://www.w3.org/2000/svg"><path d="M5 2v20h14V2H5zm9 15h-2v-2h2v2zm0-4h-2V7h2v6zm2-6h-2V5h2v2zm2 4h-2V7h2v4zm-8 2H6v-4h2v4zm0-6H6V5h2v4z"/></svg>';
+
   // Inline CSS to avoid external requests
   return `<!DOCTYPE html>
 <html>
@@ -205,14 +211,10 @@ async function buildHTML(stats) {
     .badge-user-details { display: flex; flex-direction: column; gap: 8px; }
     .title-wrapper { display: flex; align-items: center; gap: 6px; }
     .user_name { font-weight: 500; font-size: 14px; color: #f9f9fb; max-width: 135px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .rank-icon { color: #ffbb45; font-size: 10px; }
-    .rank-title { font-weight: 500; font-size: 12px; color: #ffffff; }
+    .rank-title { font-weight: 500; font-size: 12px; color: #ffffff; display: inline-flex; align-items: center; gap: 3px; }
     .details-wrapper { display: flex; gap: 8px; }
-    .details-icon-wrapper { display: flex; gap: 5px; align-items: center; }
-    .detail-icons { font-weight: 900; font-size: 11px; }
-    .trophy-icon { color: #9ca4b4; }
-    .award-icon { color: #d752ff; font-size: 13px; }
-    .door-closed-icon { color: #719cf9; font-size: 12px; }
+    .details-icon-wrapper { display: flex; gap: 4px; align-items: center; }
+    .details-icon-wrapper svg { flex-shrink: 0; }
     .details-text { font-weight: 400; font-size: 11px; color: #ffffff; }
     .thm-link { font-weight: 400; font-size: 11px; color: #f9f9fb; text-decoration: none; }
   </style>
@@ -223,12 +225,12 @@ async function buildHTML(stats) {
     <div class="badge-user-details">
       <div class="title-wrapper">
         <span class="user_name">${stats.username}</span>
-        <div><i class="fa-solid fa-bolt-lightning rank-icon"></i><span class="rank-title">${stats.rankTitle}</span></div>
+        <span class="rank-title">${iconBolt}${stats.rankTitle}</span>
       </div>
       <div class="details-wrapper">
-        <div class="details-icon-wrapper"><i class="fa-solid fa-trophy detail-icons trophy-icon"></i><span class="details-text">${stats.points}</span></div>
-        <div class="details-icon-wrapper"><i class="fa-solid fa-award detail-icons award-icon"></i><span class="details-text">${stats.rank}</span></div>
-        <div class="details-icon-wrapper"><i class="fa-solid fa-door-closed detail-icons door-closed-icon"></i><span class="details-text">${stats.rooms}</span></div>
+        <div class="details-icon-wrapper">${iconTrophy}<span class="details-text">${stats.points}</span></div>
+        <div class="details-icon-wrapper">${iconAward}<span class="details-text">${stats.rank}</span></div>
+        <div class="details-icon-wrapper">${iconDoor}<span class="details-text">${stats.rooms}</span></div>
       </div>
       <a href="https://tryhackme.com" class="thm-link" target="_blank">tryhackme.com</a>
     </div>
