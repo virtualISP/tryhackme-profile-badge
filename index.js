@@ -4,6 +4,7 @@ const path = require('path');
 
 const BADGE_URL = 'https://tryhackme.com/badge/140548';
 const OUTPUT_PATH = path.join(__dirname, 'assets', 'uploadme.png');
+const SCRAPER_API_KEY = process.env.SCRAPER_API_KEY || '';
 
 const DEBUG = process.env.DEBUG === '1' || process.env.DEBUG === 'true';
 function debugLog(...args) { if (DEBUG) console.log('[DEBUG]', ...args); }
@@ -14,6 +15,41 @@ function debugFile(name, content) {
   const fp = path.join(dir, name);
   fs.writeFileSync(fp, typeof content === 'string' ? content : JSON.stringify(content, null, 2));
   console.log(`[DEBUG] Saved ${fp} (${content.length || 0} bytes)`);
+}
+
+// ─── Fetch via ScraperAPI (or direct if no key) ───────────────────────
+function fetchViaScraperAPI(url) {
+  return new Promise((resolve, reject) => {
+    const http = require('http');
+    const https = require('https');
+
+    if (!SCRAPER_API_KEY) {
+      // Direct fetch with browser-like headers
+      const req = https.get(url, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+          'Accept-Language': 'en-US,en;q=0.9',
+          'Accept-Encoding': 'gzip, deflate, br',
+          'Connection': 'keep-alive',
+          'Upgrade-Insecure-Requests': '1',
+        },
+      }, (res) => {
+        const chunks = [];
+        res.on('data', chunk => chunks.push(chunk));
+        res.on('end', () => resolve(Buffer.concat(chunks).toString()));
+      }).on('error', reject);
+      return;
+    }
+
+    console.log(`Fetching via ScraperAPI (render=true)...`);
+    const scraperUrl = `http://api.scraperapi.com?api_key=${SCRAPER_API_KEY}&url=${encodeURIComponent(url)}&render=true`;
+    http.get(scraperUrl, (res) => {
+      const chunks = [];
+      res.on('data', chunk => chunks.push(chunk));
+      res.on('end', () => resolve(Buffer.concat(chunks).toString()));
+    }).on('error', reject);
+  });
 }
 
 // ─── Launch options for Puppeteer ─────────────────────────────────────
@@ -55,39 +91,33 @@ function getLaunchOptions() {
 
 // ─── Badge HTML fetch via Puppeteer ───────────────────────────────────
 async function fetchBadgeHTML() {
-  const browser = await puppeteer.launch(getLaunchOptions());
-  try {
-    const page = await browser.newPage();
-    await page.setViewport({ width: 329, height: 88 });
-    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36');
-    await page.goto(BADGE_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
-    let html = await page.content();
-    await browser.close();
+  const rawHtml = await fetchViaScraperAPI(BADGE_URL);
+  debugFile('badge-raw.html', rawHtml);
 
-    // TryHackMe badge page returns base64-encoded HTML: document.write(window.atob("..."))
-    const atobMatch = html.match(/document\.write\(window\.atob\("([^"]+)"\)\)/);
-    if (atobMatch) {
-      const decoded = Buffer.from(atobMatch[1], 'base64').toString('utf-8');
-      debugLog('Decoded badge HTML:', decoded.length, 'bytes');
-      debugFile('badge-decoded.html', decoded);
-      return decoded;
-    }
-
-    // Maybe the HTML is not encoded but still contains the badge
-    if (html.includes('thm_badge') || html.includes('thm_nickname')) {
-      debugLog('Badge HTML not encoded, using raw');
-      debugFile('badge-raw.html', html);
-      return html;
-    }
-
-    console.warn('Could not decode badge HTML via atob');
-    console.warn('First 500 chars:', html.substring(0, 500));
-    debugFile('badge-decode-failure.html', html);
-    throw new Error('Badge page did not contain expected content');
-  } catch (err) {
-    try { await browser.close(); } catch {}
-    throw err;
+  // Check for Vercel challenge (should not happen with ScraperAPI render=true)
+  if (rawHtml.includes('Vercel Security Checkpoint') || rawHtml.includes('Just a moment')) {
+    throw new Error('Got Vercel challenge page — ScraperAPI may have failed');
   }
+
+  // TryHackMe badge page returns base64-encoded HTML: document.write(window.atob("..."))
+  const atobMatch = rawHtml.match(/document\.write\(window\.atob\("([^"]+)"\)\)/);
+  if (atobMatch) {
+    const decoded = Buffer.from(atobMatch[1], 'base64').toString('utf-8');
+    debugLog('Decoded badge HTML:', decoded.length, 'bytes');
+    debugFile('badge-decoded.html', decoded);
+    return decoded;
+  }
+
+  // Maybe the HTML is not encoded but still contains the badge
+  if (rawHtml.includes('thm_badge') || rawHtml.includes('thm_nickname')) {
+    debugLog('Badge HTML not encoded, using raw');
+    return rawHtml;
+  }
+
+  console.warn('Could not decode badge HTML via atob');
+  console.warn('First 500 chars:', rawHtml.substring(0, 500));
+  debugFile('badge-decode-failure.html', rawHtml);
+  throw new Error('Badge page did not contain expected content');
 }
 
 // ─── Stats extraction from badge HTML ───────────────────────────────

@@ -38,6 +38,7 @@ jobs:
 
       - name: Generate badge screenshot
         env:
+          SCRAPER_API_KEY: ${{ secrets.SCRAPER_API_KEY }}
           DEBUG: '1'
         run: node index.js
 
