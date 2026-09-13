@@ -2,11 +2,8 @@ const puppeteer = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 puppeteer.use(StealthPlugin());
 
-const https = require('https');
-const http = require('http');
 const fs = require('fs');
 const path = require('path');
-const { URL } = require('url');
 
 const BADGE_URL = 'https://tryhackme.com/badge/140548';
 const OUTPUT_PATH = path.join(__dirname, 'assets', 'uploadme.png');
@@ -22,92 +19,68 @@ function debugFile(name, content) {
   console.log(`[DEBUG] Saved ${fp} (${content.length || 0} bytes)`);
 }
 
-// FlareSolverr configuration
-const FLARESOLVERR_URL = process.env.FLARESOLVERR_URL || '';
-const USE_FLARESOLVERR = FLARESOLVERR_URL.length > 0;
+// ─── Launch options for Puppeteer ─────────────────────────────────────
+function getLaunchOptions() {
+  const { execSync } = require('child_process');
+  let chromiumPath;
+  for (const bin of ['chromium-browser', 'chromium', 'google-chrome', 'google-chrome-stable']) {
+    try { chromiumPath = execSync(`which ${bin}`, { encoding: 'utf8' }).trim(); break; } catch {}
+  }
 
-// ─── FlareSolverr client ───────────────────────────────────────────
-async function fetchViaFlareSolverr(url, options = {}) {
-  if (!USE_FLARESOLVERR) throw new Error('FLARESOLVERR_URL not set');
+  const launchArgs = [
+    '--no-sandbox',
+    '--disable-setuid-sandbox',
+    '--disable-blink-features=AutomationControlled',
+    '--disable-features=VizDisplayCompositor',
+    '--no-first-run',
+    '--no-default-browser-check'
+  ];
+  const launchOpts = { args: launchArgs, headless: 'new', ignoreDefaultArgs: ['--enable-automation'] };
 
-  const payload = JSON.stringify({
-    cmd: 'request.get',
-    url: url,
-    maxTimeout: options.maxTimeout || 120000,
-  });
+  if (chromiumPath) {
+    launchOpts.executablePath = chromiumPath;
+    console.log(`Using system Chromium: ${chromiumPath}`);
+  } else {
+    console.log('No system Chromium found — using Puppeteer bundled Chromium');
+  }
 
-  const parsedUrl = new URL(FLARESOLVERR_URL);
-
-  return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error('FlareSolverr timeout')), 150000);
-
-    const req = http.request(parsedUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Content-Length': Buffer.byteLength(payload),
-      },
-    }, (res) => {
-      clearTimeout(timeout);
-      let data = '';
-      res.on('data', chunk => data += chunk);
-      res.on('end', () => {
-        try {
-          const json = JSON.parse(data);
-          if (json.status === 'ok' && json.solution) {
-            const body = json.solution.response;
-            debugLog(`FlareSolverr response for ${url}: ${body.length} bytes`);
-            resolve(body);
-          } else {
-            const msg = json.message || 'unknown error';
-            reject(new Error(`FlareSolverr: ${msg}`));
-          }
-        } catch (e) {
-          reject(e);
-        }
-      });
-    });
-
-    req.on('error', (e) => {
-      clearTimeout(timeout);
-      reject(e);
-    });
-    req.write(payload);
-    req.end();
-  });
+  return launchOpts;
 }
 
-// ─── Badge HTML fetch & decode ──────────────────────────────────────
+// ─── Badge HTML fetch via Puppeteer ───────────────────────────────────
 async function fetchBadgeHTML() {
-  if (!USE_FLARESOLVERR) throw new Error('FlareSolverr not configured');
+  const browser = await puppeteer.launch(getLaunchOptions());
+  try {
+    const page = await browser.newPage();
+    await page.setViewport({ width: 329, height: 88 });
+    await page.goto(BADGE_URL, { waitUntil: 'networkidle0' });
+    let html = await page.content();
+    await browser.close();
 
-  const rawHtml = await fetchViaFlareSolverr(BADGE_URL);
-  debugFile('badge-raw.html', rawHtml);
+    // TryHackMe badge page returns base64-encoded HTML: document.write(window.atob("..."))
+    const atobMatch = html.match(/document\.write\(window\.atob\("([^"]+)"\)\)/);
+    if (atobMatch) {
+      const decoded = Buffer.from(atobMatch[1], 'base64').toString('utf-8');
+      debugLog('Decoded badge HTML:', decoded.length, 'bytes');
+      debugFile('badge-decoded.html', decoded);
+      return decoded;
+    }
 
-  // Check if we got a Vercel challenge page
-  if (rawHtml.includes('Vercel Security Checkpoint') || rawHtml.includes('Just a moment')) {
-    throw new Error('FlareSolverr returned a Vercel challenge page — cannot fetch badge data');
+    // Maybe the HTML is not encoded but still contains the badge
+    if (html.includes('thm_badge') || html.includes('thm_nickname')) {
+      debugLog('Badge HTML not encoded, using raw');
+      debugFile('badge-raw.html', html);
+      return html;
+    }
+
+    console.warn('Could not decode badge HTML via atob');
+    console.warn('First 500 chars:', html.substring(0, 500));
+    debugFile('badge-decode-failure.html', html);
+    throw new Error('Badge page did not contain expected content');
+  } catch (err) {
+    await browser.close();
+    throw err;
   }
-
-  // TryHackMe badge page returns base64-encoded HTML: document.write(window.atob("..."))
-  const atobMatch = rawHtml.match(/document\.write\(window\.atob\("([^"]+)"\)\)/);
-  if (atobMatch) {
-    const decoded = Buffer.from(atobMatch[1], 'base64').toString('utf-8');
-    debugLog('Decoded badge HTML:', decoded.length, 'bytes');
-    debugFile('badge-decoded.html', decoded);
-    return decoded;
-  }
-
-  // Maybe the HTML is not encoded but still contains the badge
-  if (rawHtml.includes('thm_badge') || rawHtml.includes('thm_nickname')) {
-    debugLog('Badge HTML not encoded, using raw');
-    return rawHtml;
-  }
-
-  console.warn('Could not decode badge HTML via atob');
-  console.warn('First 500 chars:', rawHtml.substring(0, 500));
-  debugFile('badge-decode-failure.html', rawHtml);
-  return rawHtml;
 }
 
 // ─── Stats extraction from badge HTML ───────────────────────────────
@@ -126,14 +99,7 @@ function extractStatsFromBadgeHTML(html) {
     return statsMatches.map(m => m[1]);
   }
 
-  // Pattern 3: Look for thm_icon + thm_stat pairs
-  const iconStatMatches = [...html.matchAll(/<img[^>]*class="thm_icon"[^>]*>[\s\S]*?<span[^>]*>(\d[\d,]*)<\/span>/g)];
-  if (iconStatMatches.length >= 3) {
-    debugLog('Stats via icon+stat:', iconStatMatches.map(m => m[1]));
-    return iconStatMatches.map(m => m[1].replace(/,/g, ''));
-  }
-
-  // Pattern 4: Any three consecutive numbers in spans
+  // Pattern 3: Any three consecutive numbers in spans
   const allNums = [...html.matchAll(/<span[^>]*>\s*(\d[\d,]*)\s*<\/span>/g)].map(m => m[1].replace(/,/g, ''));
   if (allNums.length >= 3) {
     debugLog('Stats via all spans:', allNums.slice(0, 5));
@@ -147,6 +113,7 @@ function extractStatsFromBadgeHTML(html) {
 // ─── Avatar download ────────────────────────────────────────────────
 async function downloadImageAsDataUri(url) {
   return new Promise((resolve, reject) => {
+    const https = require('https');
     https.get(url, (res) => {
       if (res.statusCode !== 200) {
         reject(new Error(`HTTP ${res.statusCode} for ${url}`));
@@ -238,39 +205,19 @@ async function buildHTML(stats) {
 
 // ─── Screenshot ─────────────────────────────────────────────────────
 async function takeScreenshot(html) {
-  // Find chromium binary — try common paths, fall back to Puppeteer's bundled Chromium
-  const { execSync } = require('child_process');
-  let chromiumPath;
-  for (const bin of ['chromium-browser', 'chromium', 'google-chrome', 'google-chrome-stable']) {
-    try { chromiumPath = execSync(`which ${bin}`, { encoding: 'utf8' }).trim(); break; } catch {}
+  const browser = await puppeteer.launch(getLaunchOptions());
+  try {
+    const page = await browser.newPage();
+    await page.setViewport({ width: 329, height: 88 });
+    await page.setContent(html, { waitUntil: 'networkidle0' });
+    await page.waitForSelector('.thm-avatar');
+    await new Promise(resolve => setTimeout(resolve, 500));
+    await page.screenshot({ path: OUTPUT_PATH, omitBackground: true });
+    await browser.close();
+  } catch (err) {
+    await browser.close();
+    throw err;
   }
-
-  const launchArgs = [
-    '--no-sandbox',
-    '--disable-setuid-sandbox',
-    '--disable-blink-features=AutomationControlled',
-    '--disable-features=VizDisplayCompositor',
-    '--no-first-run',
-    '--no-default-browser-check'
-  ];
-  const launchOpts = { args: launchArgs, headless: 'new', ignoreDefaultArgs: ['--enable-automation'] };
-
-  if (chromiumPath) {
-    launchOpts.executablePath = chromiumPath;
-    console.log(`Using system Chromium: ${chromiumPath}`);
-  } else {
-    console.log('No system Chromium found — using Puppeteer bundled Chromium');
-  }
-
-  const browser = await puppeteer.launch(launchOpts);
-  const page = await browser.newPage();
-  await page.setViewport({ width: 329, height: 88 });
-
-  await page.setContent(html, { waitUntil: 'networkidle0' });
-  await page.waitForSelector('.thm-avatar');
-  await new Promise(resolve => setTimeout(resolve, 500));
-  await page.screenshot({ path: OUTPUT_PATH, omitBackground: true });
-  await browser.close();
 }
 
 // ─── Main ───────────────────────────────────────────────────────────
@@ -308,7 +255,6 @@ async function main() {
       console.warn('Stats extraction failed. HTML length:', html.length);
       console.warn('Has thm_nickname:', html.includes('thm_nickname'));
       console.warn('Has thm_stat:', html.includes('thm_stat'));
-      console.warn('Has thm_badge:', html.includes('thm_badge'));
       throw new Error(`Expected at least 3 stats from badge, got ${statsArray.length}`);
     }
     const [points, rooms, rank] = statsArray;

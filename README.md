@@ -12,7 +12,7 @@
 
 ## 📊 My Live Stats
 
-This badge updates **every hour** with my latest TryHackMe progress – points, streak, rank, and rooms completed. Click the badge to visit my profile!
+This badge updates **every hour** with my latest TryHackMe progress – points, rank, and rooms completed. Click the badge to visit my profile!
 
 <div align="center">
   <a href="https://tryhackme.com/p/virtualISP">
@@ -26,7 +26,7 @@ This badge updates **every hour** with my latest TryHackMe progress – points, 
 
 - **⏱️ Hourly updates** – Always shows current stats.
 - **🎨 Exact replica** – Uses the official TryHackMe badge design (background, icons, avatar).
-- **🤖 Fully automated** – Powered by GitHub Actions with FlareSolverr to bypass Vercel/Cloudflare challenges.
+- **🤖 Fully automated** – Powered by GitHub Actions with Puppeteer to bypass Vercel challenges.
 - **🔗 Clickable** – Takes you straight to my TryHackMe profile.
 
 ---
@@ -34,13 +34,11 @@ This badge updates **every hour** with my latest TryHackMe progress – points, 
 ## 🔄 How It Works
 
 1. A GitHub Action runs every hour (or can be triggered manually).
-2. It starts a **FlareSolverr** Docker container (self-hosted service) that solves Vercel/Cloudflare JS challenges.
-3. The action fetches the badge and profile pages via FlareSolverr (getting fully rendered HTML).
-4. Extracts stats: points, streak, rank, rooms from the badge/profile HTML.
-5. Renders the official badge HTML with current stats and avatar.
-6. Takes a high‑resolution PNG screenshot saved to `assets/uploadme.png`.
-7. If the image changed (stats updated), it’s committed back to the repo.
-8. FlareSolverr container is stopped after the run.
+2. It uses Puppeteer with stealth plugin to fetch the badge page (bypassing Vercel JS challenges).
+3. Extracts stats: points, rank, rooms from the badge HTML.
+4. Renders the official badge HTML with current stats and avatar.
+5. Takes a high‑resolution PNG screenshot saved to `assets/uploadme.png`.
+6. If the image changed (stats updated), it’s committed back to the repo.
 
 ---
 
@@ -49,9 +47,9 @@ This badge updates **every hour** with my latest TryHackMe progress – points, 
 Want an automatically updating TryHackMe badge for your own profile?
 
 1. **Fork this repository**.
-2. Update the `BADGE_URL` and `PROFILE_URL` constants in `index.js` with your own IDs (find them in the iframe embed code from TryHackMe, e.g., `https://tryhackme.com/badge/123456` and `https://tryhackme.com/p/yourUsername`).
+2. Update the `BADGE_URL` constant in `index.js` with your own badge ID (find it in the iframe embed code from TryHackMe, e.g., `https://tryhackme.com/badge/123456`).
 3. Enable GitHub Actions – that’s it!
-   - The workflow already includes a FlareSolverr service container; no extra secrets are required.
+   - The workflow already includes the necessary setup; no extra secrets are required.
 
 ---
 
@@ -61,34 +59,23 @@ Want an automatically updating TryHackMe badge for your own profile?
    ```bash
    npm install
    ```
-2. Start FlareSolverr:
-   ```bash
-   docker run -d -p 8191:8191 ghcr.io/flaresolverr/flaresolverr:latest
-   export FLARESOLVERR_URL=http://localhost:8191/v1
-   ```
-3. Run the script:
+2. Run the script:
    ```bash
    node index.js
    ```
-4. Check `assets/uploadme.png` for the generated badge.
-5. Stop FlareSolverr when done:
-   ```bash
-   docker rm -f $(docker ps -q -f ancestor=ghcr.io/flaresolverr/flaresolverr:latest)
-   ```
+3. Check `assets/uploadme.png` for the generated badge.
 
 ---
 
 ## 📝 License
 
-This project is open source under the [MIT License](LICENSE).  
-The TryHackMe badge design and assets are property of TryHackMe.
+This project is open source under the [MIT License](LICENSE).  The TryHackMe badge design and assets are property of TryHackMe.
 
 ---
 
 ## 🙌 Acknowledgements
 
 - [TryHackMe](https://tryhackme.com) for the awesome platform.
-- [FlareSolverr](https://github.com/FlareSolverr/FlareSolverr) for solving Vercel/Cloudflare challenges.
 - [Puppeteer](https://pptr.dev/) for headless browser rendering (used for screenshot generation).
 - [GitHub Actions](https://github.com/features/actions) for the automation.
 

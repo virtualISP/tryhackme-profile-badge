@@ -38,34 +38,8 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      - name: Start FlareSolverr
-        run: |
-          docker run -d --name flaresolverr \
-            -p 8191:8191 \
-            -e LOG_LEVEL=info \
-            ghcr.io/flaresolverr/flaresolverr:latest
-          
-          # Wait for FlareSolverr to be ready (check health endpoint)
-          echo "Waiting for FlareSolverr to start..."
-          for i in $(seq 1 30); do
-            if curl -sf http://localhost:8191 > /dev/null 2>&1; then
-              echo "FlareSolverr is ready!"
-              break
-            fi
-            echo "Attempt $i/30 - waiting 3s..."
-            sleep 3
-          done
-          
-          # Verify it's actually running
-          curl -sf http://localhost:8191 || {
-            echo "ERROR: FlareSolverr failed to start"
-            docker logs flaresolverr
-            exit 1
-          }
-
       - name: Generate badge screenshot
         env:
-          FLARESOLVERR_URL: 'http://localhost:8191/v1'
           DEBUG: '1'
         run: node index.js
 
@@ -77,16 +51,12 @@ jobs:
           path: debug/
           retention-days: 7
 
-      - name: Stop FlareSolverr
-        if: always()
-        run: docker rm -f flaresolverr || true
-
       - name: Commit and push if changed
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git add assets/uploadme.png
-
+          
           # Only proceed if there are changes
           if ! git diff --cached --quiet; then
             git commit -m "🔄 Updated TryHackMe badge (live stats)"
